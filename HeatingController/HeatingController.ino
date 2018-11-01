@@ -37,13 +37,14 @@
 const String ssid = "George";
 const String password = "2iggy Stardust";
 const char *appId = "esp32";
+const boolean smartConfig = false;
 
 WebServer server(80);
 Preferences preferences;
 
 const int activityLed = 4;
 unsigned long activityLedOff = millis();
-
+boolean connectFlipFlop = true;
 const int connectLed = 2;
 
 void setup(void) {
@@ -54,21 +55,50 @@ void setup(void) {
   pinMode(activityLed, OUTPUT);
   pinMode(connectLed, OUTPUT);
   digitalWrite(activityLed, LOW);
-  digitalWrite(connectLed, HIGH);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(readPreference("ssid", ssid).c_str(), readPreference("pw", password).c_str());
-  WiFi.setAutoConnect(true);
-  WiFi.setHostname(appId);
+  if (smartConfig) {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.beginSmartConfig();
+    WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
+    WiFi.onEvent(WiFiLostIP, WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
 
-  WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
-  WiFi.onEvent(WiFiLostIP, WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
+    //Wait for SmartConfig packet from mobile
+    Serial.println("Waiting for SmartConfig.");
+    while (!WiFi.smartConfigDone()) {
+      delay(200);
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+    }
 
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    Serial.println("");
+    Serial.println("SmartConfig received.");
+
+    //Wait for WiFi to connect to AP
+    Serial.println("Waiting for WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(200);
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+    }
+
+  } else {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(readPreference("ssid", ssid).c_str(), readPreference("pw", password).c_str());
+    WiFi.setAutoConnect(true);
+    WiFi.setHostname(appId);
+
+    WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
+    WiFi.onEvent(WiFiLostIP, WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
+
+    // Wait for connection
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+    }
   }
   delay(500);
+  digitalWrite(connectLed, LOW);
 
   server.on("/", handleRoot);
   server.on("/test.svg", drawGraph);
