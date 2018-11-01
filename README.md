@@ -1,0 +1,4 @@
+# ESP32_HeatingController
+
+Board Manager
+https://dl.espressif.com/dl/package_esp32_dev_index.json
