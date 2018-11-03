@@ -34,38 +34,74 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 
-const String ssid = "George";
-const String password = "2iggy Stardust";
+
 const char *appId = "esp32";
 const String rebootAPFlagName = "rebootAsAP";
+const String passwordName = "pw";
+const String ssidName = "ssid";
+const String apPassword = "password001";
 const String deviceName = "HeatingController";
+const String undefined = "-undefined-";
+const String plainParamName = "plain";
+const String trueStr = "true";
+const String falseStr = "false";
+const String emptyStr = "";
+const String appJson = "application/json";
+const int activityLed = 4;
+const int connectLed = 2;
+const int forceAPModeIn = 5;
+
+const String configHtmlHead = "<html><body><h2>" + deviceName + "</h2>";
+const String formStoreHtml = "<form action=\"/store\"><h2>Connection:</h2>";
+const String ssidHtml_1 = "Router Name:<br><input type=\"text\" name=\"" + ssidName + "\" value=\"";
+const String ssidHtml_2 = "\"><br><br>";
+const String pwHtml = "Password:<br><input type=\"text\" name=\"" + passwordName + "\" value=\"\"><br><br>";
+const String submitStoreHtml = "<input type=\"submit\" value=\"Send connection data to " + deviceName + "\">";
+const String formEndHtml = "</form><hr>";
+const String htmlEnd = "</body></html>";
+const String fsFormHtml = "<form action=\"/factorySettings\"><h2>Warning:</h2>";
+const String submitFsHtml = "<input type=\"submit\" value=\"Reset to " + deviceName + " to factory settings\">";
+
 
 IPAddress IP(192, 168, 4, 15);
 IPAddress mask = (255, 255, 255, 0);
 WebServer server(80);
 Preferences preferences;
 
-const int activityLed = 4;
 unsigned long activityLedOff = millis();
+unsigned long connectLedOff = millis();
+unsigned long timeToRestart = 0;
+
 boolean connectFlipFlop = true;
-const int connectLed = 2;
+boolean accesspointMode = false;
+
+void handleConfig() {
+  setActivityLed(500);
+  server.send(200, "text/html", (configHtmlHead + formStoreHtml + ssidHtml_1 + readSsid(emptyStr) + ssidHtml_2 + pwHtml + submitStoreHtml + formEndHtml + fsFormHtml + submitFsHtml + formEndHtml + htmlEnd).c_str());
+}
 
 void setup(void) {
+  timeToRestart = 0;
   Serial.begin(115200);
   delay(500);
 
   WiFi.disconnect(true);
   pinMode(activityLed, OUTPUT);
   pinMode(connectLed, OUTPUT);
+  pinMode(forceAPModeIn, INPUT_PULLUP);
+
   digitalWrite(activityLed, LOW);
 
   Serial.println();
   Serial.print("AP FLAG: ");
-  Serial.println(readPreference(rebootAPFlagName, "false"));
-  if (readPreference(rebootAPFlagName, "false") == "true") {
-    writePreference(rebootAPFlagName, "");
+  Serial.println(readPreference(rebootAPFlagName, falseStr));
+  if (readPreference(rebootAPFlagName, falseStr) == trueStr) {
+    accesspointMode = true;
+    timeToRestart = millis() + 60000;
+    writePreference(rebootAPFlagName, emptyStr);
+    Serial.println("AP FLAG: Cleared");
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(deviceName.c_str(), "password001");
+    WiFi.softAP(deviceName.c_str(), apPassword.c_str());
     WiFi.softAPConfig(IP, IP, mask);
     server.begin();
     Serial.print("Access Point ");
@@ -76,8 +112,13 @@ void setup(void) {
     Serial.print("MAC:");
     Serial.println(WiFi.softAPmacAddress());
   } else {
+    accesspointMode = false;
+    Serial.print("SSID:");
+    Serial.println(readSsid(undefined));
+    Serial.print("PW:");
+    Serial.println(readPreference(passwordName, undefined));
     WiFi.mode(WIFI_STA);
-    WiFi.begin(readPreference("ssid", ssid).c_str(), readPreference("pw", password).c_str());
+    WiFi.begin(readSsid(undefined).c_str(), readPreference(passwordName, undefined).c_str());
     WiFi.setAutoConnect(true);
     WiFi.setHostname(appId);
     WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
@@ -85,9 +126,8 @@ void setup(void) {
     // Wait for connection
     int count = 0;
     while (WiFi.status() != WL_CONNECTED) {
-      if (count > 6) {
-        writePreference(rebootAPFlagName, "true");
-        ESP.restart();
+      if (count > 20) {
+        performRestart(true, "CONFIG");
       }
       count++;
       delay(400);
@@ -98,27 +138,63 @@ void setup(void) {
   delay(500);
   digitalWrite(connectLed, LOW);
 
-  server.on("/", handleRoot);
-  server.on("/test.svg", drawGraph);
-  server.on("/store", storeData);
-  server.on("/fetch", fetchData);
-  server.on("/erase", eraseData);
+  server.on("/", handleNotFound);
+  server.on("/store", storeConfigDataRestart);
+  server.on("/config", handleConfig);
+  server.on("/factorySettings", factorySettings);
+  if (!accesspointMode) {
+    server.on("/fetch", fetchData);
+  }
   server.onNotFound(handleNotFound);
   server.begin();
 
-  if (MDNS.begin(appId)) {
-    Serial.println("MDNS responder started");
+  //  if (MDNS.begin(appId)) {
+  //    Serial.println("MDNS responder started");
+  //  }
+  if (accesspointMode) {
+    Serial.println("HTTP Access Point started");
+  } else {
+    Serial.println("HTTP service started");
   }
-  Serial.println("HTTP server started");
 }
 
 
 void loop(void) {
   unsigned long ms = millis();
-  if (activityLedOff < ms) {
-    digitalWrite(activityLed, LOW);
+  checkRestart(ms);
+  if (accesspointMode) {
+    if (connectLedOff < ms) {
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+      connectLedOff = millis() + 100;
+    }
+  } else {
+    if (activityLedOff < ms) {
+      digitalWrite(activityLed, LOW);
+    }
   }
   server.handleClient();
+}
+
+void checkRestart(unsigned long tim) {
+  if (timeToRestart > 0) {
+    if (timeToRestart < tim) {
+      performRestart(false, "TIMEOUT");
+    }
+  }
+  if (digitalRead(forceAPModeIn) == LOW) {
+    performRestart(true, "BUTTON");
+  }
+}
+
+void performRestart(boolean apMode, String desc) {
+  if (apMode) {
+    writePreference(rebootAPFlagName, trueStr);
+  } else {
+    writePreference(rebootAPFlagName, emptyStr);
+  }
+  Serial.println("RESTART-" + desc);
+  ESP.restart();
 }
 
 void setActivityLed(unsigned int delayMs) {
@@ -126,24 +202,28 @@ void setActivityLed(unsigned int delayMs) {
   activityLedOff = millis() + delayMs;
 }
 
-void storeData() {
+void storeConfigDataRestart() {
   setActivityLed(500);
-  String message = "Store-->\n";
+  String message = jsonNVP("action", "store") + ",";
   preferences.begin(appId, false);
   for (uint8_t i = 0; i < server.args(); i++) {
-    if (server.argName(i) != "plain") {
+    if (server.argName(i) != plainParamName) {
       if (server.arg(i).length() > 0) {
         preferences.putString(server.argName(i).c_str(), server.arg(i));
-        message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+        if (server.argName(i) != passwordName) {
+          message += jsonNVP(server.argName(i), server.arg(i)) + ",";
+        } else {
+          message += jsonNVP(server.argName(i), "*") + ",";
+        }
       } else {
         preferences.remove(server.argName(i).c_str());
-        message += " " + server.argName(i) + ": null\n";
+        message += jsonNVP(server.argName(i), "") + ",";
       }
     }
   }
   preferences.end();
-  Serial.print(message);
-  server.send(200, "text/plain", message);
+  timeToRestart = millis() + 500;
+  server.send(200, appJson, jsonResponse(message, "OK"));
 }
 
 void fetchData() {
@@ -151,7 +231,7 @@ void fetchData() {
   String message = "Fetch-->\n";
   preferences.begin(appId, false);
   for (uint8_t i = 0; i < server.args(); i++) {
-    if (server.argName(i) != "plain") {
+    if ((server.argName(i) != plainParamName) && (server.argName(i) != passwordName)) {
       String value = preferences.getString(server.argName(i).c_str(), server.arg(i));
       message += " " + server.argName(i) + ": " + value + "\n";
     }
@@ -161,14 +241,17 @@ void fetchData() {
   server.send(200, "text/plain", message);
 }
 
-void eraseData() {
+void factorySettings() {
   setActivityLed(500);
-  String message = "Erase-->\n";
-  preferences.begin(appId, false);
-  preferences.clear();
-  preferences.end();
-  Serial.print(message);
-  server.send(200, "text/plain", message);
+  if (accesspointMode) {
+    preferences.begin(appId, false);
+    preferences.clear();
+    preferences.end();
+    server.send(200, appJson, actionResponse("Erase", "OK", "Factory Settings"));
+    timeToRestart = millis() + 500;
+  } else {
+    server.send(401, appJson, actionResponse("Error", "not authorised", "Local (AP) mode only"));
+  }
 }
 
 
@@ -189,11 +272,15 @@ void writePreference(String pName, String val) {
   preferences.end();
 }
 
+String readSsid(String defaultStr) {
+  return readPreference(ssidName, defaultStr);
+}
+
 void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   Serial.print(appId);
   Serial.print(" is connected to: ");
-  Serial.println(ssid);
+  Serial.println(readSsid(undefined));
   Serial.print("IP address: ");
   Serial.println(IPAddress(info.got_ip.ip_info.ip.addr));
   digitalWrite(connectLed, LOW);
@@ -206,6 +293,21 @@ void WiFiLostIP(WiFiEvent_t event, WiFiEventInfo_t info)
   Serial.println(info.disconnected.reason);
 }
 
+String actionResponse(String actionStr, String valueStr, String noteStr) {
+  return "{" + jsonNVP("device", deviceName) + "," + jsonNVP("action", actionStr) + "," + jsonNVP("value", valueStr) + "," + jsonNVP("note", noteStr) + "}";
+}
+
+String jsonResponse(String dataStr, String statusStr) {
+  return "{" + jsonNVP("device", deviceName) + "," + dataStr + jsonNVP("status", statusStr) + "}";
+}
+
+String jsonNVP(String nameStr, String valueStr) {
+  if (valueStr.length() == 0) {
+    return "\"" + nameStr + "\":null";
+  }
+  return "\"" + nameStr + "\":\"" + valueStr + "\"";
+}
+
 void handleNotFound() {
   setActivityLed(500);
   String message = "File Not Found\n\n";
@@ -216,51 +318,8 @@ void handleNotFound() {
   message += "\nArguments: ";
   message += server.args();
   message += "\n";
-
   for (uint8_t i = 0; i < server.args(); i++) {
     message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
   }
   server.send(404, "text/plain", message);
-}
-
-void handleRoot() {
-  setActivityLed(500);
-  char temp[400];
-  int sec = millis() / 1000;
-  int min = sec / 60;
-  int hr = min / 60;
-
-  snprintf(temp, 400, "<html>\
-  <head>\
-    <meta http-equiv='refresh' content='5'/>\
-    <title>ESP32 Demo</title>\
-    <style>\
-      body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
-    </style>\
-  </head>\
-  <body>\
-    <h1>Hello from ESP32!</h1>\
-    <p>Uptime: %02d:%02d:%02d</p>\
-    <img src=\"/test.svg\" />\
-  </body>\
-</html>", hr, min % 60, sec % 60);
-  server.send(200, "text/html", temp);
-}
-
-void drawGraph() {
-  String out = "";
-  char temp[100];
-  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"400\" height=\"150\">\n";
-  out += "<rect width=\"400\" height=\"150\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
-  out += "<g stroke=\"black\">\n";
-  int y = rand() % 130;
-  for (int x = 10; x < 390; x += 10) {
-    int y2 = rand() % 130;
-    sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke-width=\"1\" />\n", x, 140 - y, x + 10, 140 - y2);
-    out += temp;
-    y = y2;
-  }
-  out += "</g>\n</svg>\n";
-
-  server.send(200, "image/svg+xml", out);
 }
