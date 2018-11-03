@@ -37,8 +37,11 @@
 const String ssid = "George";
 const String password = "2iggy Stardust";
 const char *appId = "esp32";
-const boolean smartConfig = false;
+const String rebootAPFlagName = "rebootAsAP";
+const String deviceName = "HeatingController";
 
+IPAddress IP(192, 168, 4, 15);
+IPAddress mask = (255, 255, 255, 0);
 WebServer server(80);
 Preferences preferences;
 
@@ -56,43 +59,38 @@ void setup(void) {
   pinMode(connectLed, OUTPUT);
   digitalWrite(activityLed, LOW);
 
-  if (smartConfig) {
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.beginSmartConfig();
-    WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
-    WiFi.onEvent(WiFiLostIP, WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
-
-    //Wait for SmartConfig packet from mobile
-    Serial.println("Waiting for SmartConfig.");
-    while (!WiFi.smartConfigDone()) {
-      delay(200);
-      digitalWrite(connectLed, connectFlipFlop);
-      connectFlipFlop = !connectFlipFlop;
-    }
-
-    Serial.println("");
-    Serial.println("SmartConfig received.");
-
-    //Wait for WiFi to connect to AP
-    Serial.println("Waiting for WiFi");
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(200);
-      digitalWrite(connectLed, connectFlipFlop);
-      connectFlipFlop = !connectFlipFlop;
-    }
-
+  Serial.println();
+  Serial.print("AP FLAG: ");
+  Serial.println(readPreference(rebootAPFlagName, "false"));
+  if (readPreference(rebootAPFlagName, "false") == "true") {
+    writePreference(rebootAPFlagName, "");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(deviceName.c_str(), "password001");
+    WiFi.softAPConfig(IP, IP, mask);
+    server.begin();
+    Serial.print("Access Point ");
+    Serial.print(deviceName);
+    Serial.println(" Started.");
+    Serial.print("IP: ");
+    Serial.println(WiFi.softAPIP());
+    Serial.print("MAC:");
+    Serial.println(WiFi.softAPmacAddress());
   } else {
     WiFi.mode(WIFI_STA);
     WiFi.begin(readPreference("ssid", ssid).c_str(), readPreference("pw", password).c_str());
     WiFi.setAutoConnect(true);
     WiFi.setHostname(appId);
-
     WiFi.onEvent(WiFiGotIP, WiFiEvent_t::SYSTEM_EVENT_STA_GOT_IP);
     WiFi.onEvent(WiFiLostIP, WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
-
     // Wait for connection
+    int count = 0;
     while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
+      if (count > 6) {
+        writePreference(rebootAPFlagName, "true");
+        ESP.restart();
+      }
+      count++;
+      delay(400);
       digitalWrite(connectLed, connectFlipFlop);
       connectFlipFlop = !connectFlipFlop;
     }
@@ -179,6 +177,16 @@ String readPreference(String pName, String defaultValue) {
   String value = preferences.getString(pName.c_str(), defaultValue);
   preferences.end();
   return value;
+}
+
+void writePreference(String pName, String val) {
+  preferences.begin(appId, false);
+  if (val.length() > 0) {
+    preferences.putString(pName.c_str(), val);
+  } else {
+    preferences.remove(pName.c_str());
+  }
+  preferences.end();
 }
 
 void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info)
