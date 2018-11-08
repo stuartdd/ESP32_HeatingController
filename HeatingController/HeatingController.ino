@@ -4,7 +4,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
-
+#include "time.h"
 /*
    TODO: error Page
    TODO: error JSON
@@ -24,6 +24,10 @@ const String deviceTwoDesc = "Hot Water";
 const int activityLed = 4;
 const int connectLed = 2;
 const int forceAPModeIn = 5;
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 0;
+const int   daylightOffset_sec = 3600;
 
 /*
    Access Point definitions
@@ -53,6 +57,7 @@ const unsigned long msPerHalfSecond = 500;
 const unsigned long msPerSecond = 1000;
 const unsigned long msPerMin = 60 * msPerSecond;
 const unsigned long msPerHour = 60 * msPerMin;
+const unsigned long msNtpFetchDelay = msPerSecond * 3;
 const String undefined = "-undefined-";
 const String plainParamName = "plain";
 const String trueStr = "true";
@@ -77,6 +82,7 @@ const String factorySetHtml = "<hr><form " + fg + " action=\"/factorySettings\">
 /*
    Working storage
 */
+unsigned long timeToCheckTime = 0;
 unsigned long timeToRestart = 0;
 unsigned long activityLedOff = millis();
 unsigned long connectLedOff = millis();
@@ -113,7 +119,7 @@ String configHtmlHead() {
 
 
 String configHtml() {
-    return configHtmlHead() + statusHtml() + connectionHtml() + factorySetHtml + htmlEnd;
+  return configHtmlHead() + statusHtml() + connectionHtml() + factorySetHtml + htmlEnd;
 }
 
 
@@ -212,10 +218,10 @@ void setup(void) {
       digitalWrite(connectLed, connectFlipFlop);
       connectFlipFlop = !connectFlipFlop;
     }
+    timeToCheckTime = millis() + msNtpFetchDelay;
   }
   delay(msPerHalfSecond);
   digitalWrite(connectLed, LOW);
-
   server.on("/", handleNotFound);
   server.on("/store", handleStoreConfigDataAndRestart);
   server.on("/config", handleConfigHtml);
@@ -237,6 +243,7 @@ void setup(void) {
 
 void loop(void) {
   unsigned long ms = millis();
+  checkTime(ms);
   checkRestart(ms);
   checkDevice(ms);
   if (accesspointMode) {
@@ -430,6 +437,52 @@ void processDeviceArgs() {
     if (divName == deviceTwoName) {
       deviceTwoOffset = divOffset;
       Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffset);
+    }
+  }
+}
+
+/*
+ * struct tm
+{
+  int tm_sec;
+  int tm_min;
+  int tm_hour;
+  int tm_mday;
+  int tm_mon;
+  int tm_year;
+  int tm_wday;
+  int tm_yday;
+  int tm_isdst;
+#ifdef __TM_GMTOFF
+  long  __TM_GMTOFF;
+#endif
+#ifdef __TM_ZONE
+  const char *__TM_ZONE;
+#endif
+};
+ */
+String getLocalTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    timeToCheckTime = millis() + msNtpFetchDelay;
+    return "? ?:?:?";
+  }
+  return String(timeinfo.tm_wday) + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
+}
+
+void checkTime(unsigned long tim) {
+  if (timeToCheckTime > 0) {
+    if (timeToCheckTime < tim) {
+      Serial.print("Fetching time from NTP:");
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+      struct tm timeinfo;
+      if (!getLocalTime(&timeinfo)) {
+        Serial.println("Failed");
+        timeToCheckTime = tim + msNtpFetchDelay;
+      } else {
+        timeToCheckTime = 0;
+        Serial.println(getLocalTime());
+      }
     }
   }
 }
