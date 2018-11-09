@@ -17,7 +17,7 @@ const String deviceOneName = "ch";
 const String deviceOneDesc = "Central Heating:";
 const int deviceTwoPin = 17;
 const String deviceTwoName = "hw";
-const String deviceTwoDesc = "Hot Water";
+const String deviceTwoDesc = "Hot Water:";
 /*
    Define the pin numbers. Device Pin numbers defined above!
 */
@@ -33,7 +33,7 @@ const int   daylightOffset_sec = 3600;
    Access Point definitions
 */
 const String apPassword = "password001";
-IPAddress IP(192, 168, 4, 15);
+IPAddress IP(10, 10, 10, 10);
 IPAddress mask = (255, 255, 255, 0);
 
 /*
@@ -74,6 +74,7 @@ const String deviceDesc = "Heating Controller (ESP32)";
 const String appJson = "application/json";
 const String txtHtml = "text/html";
 const String fg = " style=\"color:White;\" ";
+const String fgerr = " style=\"color:red;\" ";
 const String htmlEnd = "</body></html>";
 const String factorySetHtml = "<hr><form " + fg + " action=\"/factorySettings\">"
                               "<h2>Warning:</h2>"
@@ -82,27 +83,27 @@ const String factorySetHtml = "<hr><form " + fg + " action=\"/factorySettings\">
 /*
    Working storage
 */
-unsigned long timeToCheckTime = 0;
 unsigned long timeToRestart = 0;
 unsigned long activityLedOff = millis();
-unsigned long connectLedOff = millis();
+unsigned long connectLedTime = millis();
 unsigned long deviceOneOffset = 0;
 unsigned long deviceTwoOffset = 0;
 
 boolean connectFlipFlop = true;
 boolean accesspointMode = false;
+boolean restartInApMode = false;
+boolean displayConfig = false;
 boolean htmlMode = true;
 String deviceOneState = offStr;
 String deviceTwoState = offStr;
-String errorMessage = "";
-int errorCode = 0;
+int responseCode = 0;
 
 /*
    Define dynamic HTML Strings
 */
 
 String configHtmlHead() {
-  if (accesspointMode) {
+  if (displayConfig) {
     return "<html>"
            "<head>"
            "<title>AP: Config " + deviceName + "</title>"
@@ -113,51 +114,75 @@ String configHtmlHead() {
            "<head><meta http-equiv=\"refresh\" content=\"10;url=/config\"/>"
            "<title>Config: " + deviceName + "</title>"
            "</head>"
-           "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>";
+           "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>"
+           "<hr><h3 " + fg + ">Day:Time " + getLocalTime() + "</h3>";
   }
 }
 
-
-String configHtml() {
-  return configHtmlHead() + statusHtml() + connectionHtml() + factorySetHtml + htmlEnd;
+String switchHtml(String cm) {
+  if (accesspointMode) {
+    return "";
+  }
+  return "<hr><h3 " + fg + ">Switch " + deviceName + " to " + cm + " mode:</h3>"
+         "<input type=\"button\" onclick=\"location.href='/switch';\" value=\"Switch to " + cm + " Mode\" />";
 }
 
+String messageHtml(String msg) {
+  if (msg == "") {
+    return "";
+  }
+  if (responseCode == 0) {
+    return "<hr><h3 " + fg + ">" + msg + "</h3>";
+  } else {
+    return "<hr><h3 " + fgerr + ">Error:" + String(responseCode) + msg + "</h3>";
+  }
+}
+
+String configHtml(String msg) {
+  if (displayConfig) {
+    return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + factorySetHtml + htmlEnd;
+  }
+  return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Config") + htmlEnd;
+}
 
 String connectionHtml() {
   return "<hr><form " + fg + " action=\"/store\">"
          "<h2>Connection:</h2>"
          "<h3>Router Name:</h3><input type=\"text\" name=\"ssid\" value=\"" + readSsid(emptyStr) + "\"><br><br>"
          "<h3>Password:</h3><input type=\"text\" name=\"pw\" value=\"\"><br><br>"
-         "<input type=\"submit\" value=\"Send connection data to HeatingController\">"
+         "<input type=\"submit\" value=\"Send connection data\">"
          "</form>";
 }
 
 String statusHtml() {
-  return "<table " + fg + ">"
+  return "<hr><table " + fg + ">"
          "<tr>"
          "<th>Device</th><th>Status</th><th>For</th><th>Clear</th></th><th>Boost</th><th>Boost</th>"
          "</tr><tr>"
          "<td>Central Heating:</td>"
          "<td>" + deviceOneState + "</td>"
-         "<td>" + calcMinutes(deviceOneOffset) + "</td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?ch=0';\" value=\"Off\" /></td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?ch=60';\" value=\"1 Hour\" /></td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?ch=120';\" value=\"2 Hour\" /></td>"
+         "<td>" + calcMinutes(deviceOneOffset) + "</td>" +
+         deviceButtonHtml("ch=0", "Off") +
+         deviceButtonHtml("ch=60", "1 Hour") +
+         deviceButtonHtml("ch=120", "2 Hour") +
          "</tr><tr>"
          "<td>Hot Water</td>"
          "<td>" + deviceTwoState + "</td>"
-         "<td>" + calcMinutes(deviceTwoOffset) + "</td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?hw=0';\" value=\"Off\" /></td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?hw=60';\" value=\"1 Hour\" /></td>"
-         "<td><input type=\"button\" onclick=\"location.href='/device/html?hw=120';\" value=\"2 Hour\" /></td>"
+         "<td>" + calcMinutes(deviceTwoOffset) + "</td>" +
+         deviceButtonHtml("hw=0", "Off") +
+         deviceButtonHtml("hw=60", "1 Hour") +
+         deviceButtonHtml("hw=120", "2 Hour") +
          "</tr>"
          "</table>";
 }
 
-
+String deviceButtonHtml(String devtim, String desc) {
+  return "<td><input type=\"button\" onclick=\"location.href='/device?" + devtim + "';\" value=\"" + desc + "\" /></td>";
+}
 
 void setup(void) {
-  timeToRestart = 0;
+  initRestart(false, 0);
+
   Serial.begin(115200);
   delay(msPerHalfSecond);
 
@@ -181,7 +206,8 @@ void setup(void) {
   Serial.println(readPreference(rebootAPFlagName, falseStr));
   if (readPreference(rebootAPFlagName, falseStr) == trueStr) {
     accesspointMode = true;
-    timeToRestart = millis() + 120000;
+    displayConfig = true;
+    initRestart(false, msPerMin * 3);
     writePreference(rebootAPFlagName, emptyStr);
     Serial.println("AP FLAG: Cleared");
     WiFi.mode(WIFI_AP);
@@ -197,10 +223,9 @@ void setup(void) {
     Serial.println(WiFi.softAPmacAddress());
   } else {
     accesspointMode = false;
+    displayConfig = false;
     Serial.print("SSID:");
     Serial.println(readSsid(undefined));
-    Serial.print("PW:");
-    Serial.println(readPreference(passwordName, undefined));
     WiFi.mode(WIFI_STA);
     WiFi.begin(readSsid(undefined).c_str(), readPreference(passwordName, undefined).c_str());
     WiFi.setAutoConnect(true);
@@ -218,19 +243,31 @@ void setup(void) {
       digitalWrite(connectLed, connectFlipFlop);
       connectFlipFlop = !connectFlipFlop;
     }
-    timeToCheckTime = millis() + msNtpFetchDelay;
+
+    digitalWrite(connectLed, HIGH);
+    Serial.print("Fetching time from NTP:");
+    boolean timeNotFetched = true;
+    while (timeNotFetched) {
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+      struct tm timeinfo;
+      if (!getLocalTime(&timeinfo)) {
+        Serial.println("Failed");
+        delay(msNtpFetchDelay);
+      } else {
+        timeNotFetched = 0;
+        digitalWrite(connectLed, LOW);
+        Serial.println(getLocalTime());
+      }
+    }
   }
+
   delay(msPerHalfSecond);
-  digitalWrite(connectLed, LOW);
   server.on("/", handleNotFound);
   server.on("/store", handleStoreConfigDataAndRestart);
   server.on("/config", handleConfigHtml);
-  server.on("/device/html", handleDeviceHtml);
-  server.on("/device", handleDeviceJson);
+  server.on("/device", handleDeviceHtml);
+  server.on("/switch", handleSwitchHtml);
   server.on("/factorySettings", handleFactorySettings);
-  if (!accesspointMode) {
-    server.on("/fetch", handleFetchData);
-  }
   server.onNotFound(handleNotFound);
   server.begin();
 
@@ -239,24 +276,39 @@ void setup(void) {
   } else {
     Serial.println("HTTP service started");
   }
+  digitalWrite(connectLed, LOW);
 }
 
 void loop(void) {
   unsigned long ms = millis();
-  checkTime(ms);
-  checkRestart(ms);
   checkDevice(ms);
-  if (accesspointMode) {
-    if (connectLedOff < ms) {
-      digitalWrite(connectLed, connectFlipFlop);
-      connectFlipFlop = !connectFlipFlop;
-      connectLedOff = millis() + 100;
-    }
-  } else {
-    if (activityLedOff < ms) {
-      digitalWrite(activityLed, LOW);
+
+  if (timeToRestart != 0) {
+    if (ms > timeToRestart) {
+      performRestart(restartInApMode, "TIMEOUT");
     }
   }
+
+  if (accesspointMode) {
+    if (connectLedTime < ms) {
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+      if (connectFlipFlop) {
+        connectLedTime = millis() + 600;
+      } else {
+        connectLedTime = millis() + 100;
+      }
+    }
+  }
+
+  if (ms > activityLedOff) {
+    digitalWrite(activityLed, LOW);
+  }
+
+  if (digitalRead(forceAPModeIn) == LOW) {
+    performRestart(true, "BUTTON");
+  }
+
   server.handleClient();
 }
 
@@ -268,21 +320,23 @@ void loop(void) {
 */
 void handleConfigHtml() {
   startTransaction(msPerSecond);
-  server.send(200, "text/html", configHtml());
-}
-
-void handleDeviceJson() {
-  startTransaction(msPerHalfSecond);
-  processDeviceArgs();
-  server.send(200, appJson, jsonResponse(jsonNVP(deviceOneName, deviceOneState) + "," + jsonNVP(deviceTwoName, deviceTwoState) + ",", "OK"));
+  server.send(200, "text/html", configHtml(""));
 }
 
 void handleDeviceHtml() {
   startTransaction(msPerSecond);
-  processDeviceArgs();
-  server.send(200, txtHtml, configHtml());
+  server.send(200, txtHtml, configHtml(processDeviceArgs()));
 }
 
+void handleSwitchHtml() {
+  startTransaction(msPerSecond);
+  displayConfig = !displayConfig;
+  if (displayConfig) {
+    server.send(200, "text/html", configHtml("Switched to Config Mode"));
+  } else {
+    server.send(200, "text/html", configHtml("Switched to Running Mode"));
+  }
+}
 /*
   Request Handler Method - used to store data in preferences from http request query parameters
   For example /store?name1=value1&name2=value2
@@ -307,29 +361,10 @@ void handleStoreConfigDataAndRestart() {
     }
   }
   preferences.end();
-  timeToRestart = millis() + msPerHalfSecond;
-  server.send(200, appJson, jsonResponse(message, "OK"));
+  initRestart(false, msPerSecond);
+  server.send(200, txtHtml, configHtml("Data stored: Restarting..."));
 }
 
-/*
-  Request Handler Method - used to read data in preferences from http request query parameters
-  For example /fetch?name1=value1&name2=value2
-  returns name1 and name2 from preferences where value1 and value2 are returned if name1 or name2 are not found
-*/
-void handleFetchData() {
-  startTransaction(msPerHalfSecond);
-  String message = "Fetch-->\n";
-  preferences.begin(appId, false);
-  for (uint8_t i = 0; i < server.args(); i++) {
-    if ((server.argName(i) != plainParamName) && (server.argName(i) != passwordName)) {
-      String value = preferences.getString(server.argName(i).c_str(), server.arg(i));
-      message += " " + server.argName(i) + ": " + value + "\n";
-    }
-  }
-  preferences.end();
-  Serial.print(message);
-  server.send(200, "text/plain", message);
-}
 
 /*
    Request Handler Method - used to read data in preferences from http request query parameters
@@ -337,15 +372,11 @@ void handleFetchData() {
 */
 void handleFactorySettings() {
   startTransaction(msPerHalfSecond);
-  if (accesspointMode) {
-    preferences.begin(appId, false);
-    preferences.clear();
-    preferences.end();
-    server.send(200, appJson, actionResponse("Erase", "OK", "Factory Settings"));
-    timeToRestart = millis() + msPerHalfSecond;
-  } else {
-    server.send(401, appJson, actionResponse("Error", "not authorised", "Local (AP) mode only"));
-  }
+  preferences.begin(appId, false);
+  preferences.clear();
+  preferences.end();
+  initRestart(true, msPerSecond);
+  server.send(200, txtHtml, configHtml("Reset to Factory Settings: Restarting..."));
 }
 
 void handleNotFound() {
@@ -422,28 +453,10 @@ String jsonNVP(String nameStr, String valueStr) {
    ---------------------------------------------------------------------------------
 */
 
-/*
-   Interpret device id and actions from request query parameters.
-   Calculates offsets in MS for the device OFF
-*/
-void processDeviceArgs() {
-  for (uint8_t i = 0; i < server.args(); i++) {
-    String divName = server.argName(i);
-    unsigned int divOffset = millis() + (server.arg(i).toInt() * msPerSecond);
-    if (divName == deviceOneName) {
-      deviceOneOffset = divOffset;
-      Serial.println("Div:" + deviceOneName + "=" + deviceOneOffset);
-    }
-    if (divName == deviceTwoName) {
-      deviceTwoOffset = divOffset;
-      Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffset);
-    }
-  }
-}
 
 /*
- * struct tm
-{
+   struct tm
+  {
   int tm_sec;
   int tm_min;
   int tm_hour;
@@ -453,39 +466,22 @@ void processDeviceArgs() {
   int tm_wday;
   int tm_yday;
   int tm_isdst;
-#ifdef __TM_GMTOFF
+  #ifdef __TM_GMTOFF
   long  __TM_GMTOFF;
-#endif
-#ifdef __TM_ZONE
+  #endif
+  #ifdef __TM_ZONE
   const char *__TM_ZONE;
-#endif
-};
- */
+  #endif
+  };
+*/
 String getLocalTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    timeToCheckTime = millis() + msNtpFetchDelay;
-    return "? ?:?:?";
+    return "?: ?:?:?";
   }
-  return String(timeinfo.tm_wday) + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
+  return String(timeinfo.tm_wday) + ": " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
 }
 
-void checkTime(unsigned long tim) {
-  if (timeToCheckTime > 0) {
-    if (timeToCheckTime < tim) {
-      Serial.print("Fetching time from NTP:");
-      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-      struct tm timeinfo;
-      if (!getLocalTime(&timeinfo)) {
-        Serial.println("Failed");
-        timeToCheckTime = tim + msNtpFetchDelay;
-      } else {
-        timeToCheckTime = 0;
-        Serial.println(getLocalTime());
-      }
-    }
-  }
-}
 
 /*
    Check for a boosted device making sure it is off or on
@@ -513,59 +509,64 @@ void checkDevice(unsigned long tim) {
   }
 }
 
-/*
-   Check if it is time to restart. Restarts are delayed so the response can be returned before it restarts
-
-   Also checks the forceAPModeIn button to see if restart as access point is required!
-*/
-void checkRestart(unsigned long tim) {
-  if (timeToRestart > 0) {
-    if (timeToRestart < tim) {
-      performRestart(false, "TIMEOUT");
-    }
-  }
-  if (digitalRead(forceAPModeIn) == LOW) {
-    performRestart(true, "BUTTON");
-  }
-}
-
-void performRestart(boolean apMode, String desc) {
-  if (canRestart()) {
-    if (apMode) {
-      writePreference(rebootAPFlagName, trueStr);
-    } else {
-      writePreference(rebootAPFlagName, emptyStr);
-    }
-    Serial.println("RESTART-" + desc);
-    ESP.restart();
+void initRestart(boolean apMode, unsigned long delayRestart) {
+  if (delayRestart == 0) {
+    timeToRestart = 0;
+    restartInApMode = false;
   } else {
-    timeToRestart = millis() + msPerSecond;
-    Serial.println("RESTART-DELAYED" + desc);
-    return;
+    restartInApMode = apMode;
+    timeToRestart = millis() + delayRestart;
   }
 }
 
 
-boolean canRestart() {
-  return ((deviceOneOffset == 0) && (deviceTwoOffset == 0));
+void performRestart(boolean resInApMode, String desc) {
+  if (resInApMode) {
+    writePreference(rebootAPFlagName, trueStr);
+    Serial.println("RESTART to AP - " + desc);
+  } else {
+    writePreference(rebootAPFlagName, emptyStr);
+    Serial.println("RESTART to STA - " + desc);
+  }
+  ESP.restart();
 }
+
+
 /*
    Set activity led. Extends the on time so it can be seen.
 */
 void startTransaction(unsigned int delayMs) {
   digitalWrite(activityLed, HIGH);
-  clearErrorData();
+  responseCode = 0;
   activityLedOff = millis() + delayMs;
+  if (accesspointMode) {
+    timeToRestart = millis() + msPerMin;
+  }
 }
 
-
-void setErrorData(String m, int code) {
-  errorMessage = m;
-  errorCode = code;
+/*
+   Interpret device id and actions from request query parameters.
+   Calculates offsets in MS for the device OFF
+*/
+String processDeviceArgs() {
+  for (uint8_t i = 0; i < server.args(); i++) {
+    String divName = server.argName(i);
+    unsigned int divOffset = millis() + (server.arg(i).toInt() * msPerSecond);
+    if (divName == deviceOneName) {
+      deviceOneOffset = divOffset;
+      Serial.println("Div:" + deviceOneName + "=" + deviceOneOffset);
+    }
+    if (divName == deviceTwoName) {
+      deviceTwoOffset = divOffset;
+      Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffset);
+    }
+  }
+  checkDevice(millis());
+  return deviceOneDesc + " " + deviceOneState + ". " + deviceTwoDesc + " " + deviceTwoState + ".";
 }
 
-void clearErrorData() {
-  setErrorData("", 0);
+void setErrorData(int code) {
+  responseCode = code;
 }
 
 String calcMinutes(unsigned long ms) {
