@@ -76,9 +76,10 @@ const String txtHtml = "text/html";
 const String fg = " style=\"color:White;\" ";
 const String fgerr = " style=\"color:red;\" ";
 const String htmlEnd = "</body></html>";
-const String factorySetHtml = "<hr><form " + fg + " action=\"/factorySettings\">"
-                              "<h2>Warning:</h2>"
-                              "<input type=\"submit\" value=\"Reset to HeatingController to factory settings\"></form>";
+const String resetHtml = "<hr><h3 " + fg + ">Reset Device:</h3>"
+                         "<input type=\"button\" onclick=\"location.href='/reset';\" value=\"Reset Device\" />";
+const String factorySetHtml = "<hr><h3 " + fg + ">Warning:</h3>"
+                         "<input type=\"button\" onclick=\"location.href='/factorySettings';\" value=\"Reset to HeatingController to factory settings\" />";
 
 /*
    Working storage
@@ -140,7 +141,7 @@ String messageHtml(String msg) {
 
 String configHtml(String msg) {
   if (displayConfig) {
-    return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + factorySetHtml + htmlEnd;
+    return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + htmlEnd;
   }
   return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Config") + htmlEnd;
 }
@@ -148,7 +149,7 @@ String configHtml(String msg) {
 String connectionHtml() {
   return "<hr><form " + fg + " action=\"/store\">"
          "<h2>Connection:</h2>"
-         "<h3>Router Name:</h3><input type=\"text\" name=\"ssid\" value=\"" + readSsid(emptyStr) + "\"><br><br>"
+         "<h3>Router Name:</h3><input type=\"text\" name=\"ssid\" value=\"" + readSsid(emptyStr) + "\"><br>"
          "<h3>Password:</h3><input type=\"text\" name=\"pw\" value=\"\"><br><br>"
          "<input type=\"submit\" value=\"Send connection data\">"
          "</form>";
@@ -267,6 +268,8 @@ void setup(void) {
   server.on("/config", handleConfigHtml);
   server.on("/device", handleDeviceHtml);
   server.on("/switch", handleSwitchHtml);
+  server.on("/reset", handleResetHtml);
+
   server.on("/factorySettings", handleFactorySettings);
   server.onNotFound(handleNotFound);
   server.begin();
@@ -326,6 +329,11 @@ void handleConfigHtml() {
 void handleDeviceHtml() {
   startTransaction(msPerSecond);
   server.send(200, txtHtml, configHtml(processDeviceArgs()));
+}
+
+void handleResetHtml() {
+  startTransaction(msPerSecond);
+  initRestart(false, msPerSecond);
 }
 
 void handleSwitchHtml() {
