@@ -4,6 +4,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <stdio.h>
 #include "time.h"
 /*
    TODO: error Page
@@ -15,9 +16,11 @@
 const int deviceOnePin = 16;
 const String deviceOneName = "ch";
 const String deviceOneDesc = "Central Heating:";
+const String deviceOneShort = "Heating:";
 const int deviceTwoPin = 17;
 const String deviceTwoName = "hw";
 const String deviceTwoDesc = "Hot Water:";
+const String deviceTwoShort = "Water:";
 /*
    Define the pin numbers. Device Pin numbers defined above!
 */
@@ -57,6 +60,8 @@ const unsigned long msPerHalfSecond = 500;
 const unsigned long msPerSecond = 1000;
 const unsigned long msPerMin = 60 * msPerSecond;
 const unsigned long msPerHour = 60 * msPerMin;
+const unsigned long msPerDay = msPerHour * 24;
+
 const unsigned long msNtpFetchDelay = msPerSecond * 3;
 const String undefined = "-undefined-";
 const String plainParamName = "plain";
@@ -69,8 +74,9 @@ const String emptyStr = "";
 /*
    Define Static HTML Elements
 */
+const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 const String deviceName = "HeatingController";
-const String deviceDesc = "Heating Controller (ESP32)";
+const String deviceDesc = "ESP32 Heating Controller";
 const String appJson = "application/json";
 const String txtHtml = "text/html";
 const String fg = " style=\"color:White;\" ";
@@ -79,7 +85,7 @@ const String htmlEnd = "</body></html>";
 const String resetHtml = "<hr><h3 " + fg + ">Reset Device:</h3>"
                          "<input type=\"button\" onclick=\"location.href='/reset';\" value=\"Reset Device\" />";
 const String factorySetHtml = "<hr><h3 " + fg + ">Warning:</h3>"
-                         "<input type=\"button\" onclick=\"location.href='/factorySettings';\" value=\"Reset to HeatingController to factory settings\" />";
+                              "<input type=\"button\" onclick=\"location.href='/factorySettings';\" value=\"Reset to HeatingController to factory settings\" />";
 
 /*
    Working storage
@@ -89,6 +95,8 @@ unsigned long activityLedOff = millis();
 unsigned long connectLedTime = millis();
 unsigned long deviceOneOffset = 0;
 unsigned long deviceTwoOffset = 0;
+
+unsigned long minutesAtStartTime = 0;
 
 boolean connectFlipFlop = true;
 boolean accesspointMode = false;
@@ -107,16 +115,16 @@ String configHtmlHead() {
   if (displayConfig) {
     return "<html>"
            "<head>"
-           "<title>AP: Config " + deviceName + "</title>"
+           "<title>Config: " + deviceName + "</title>"
            "</head>"
-           "<body style=\"background-color:DarkSalmon;\"><h2 " + fg + ">AP: " + deviceDesc + "</h2>";
+           "<body style=\"background-color:DarkSalmon;\"><h2 " + fg + ">Config: " + deviceDesc + "</h2>";
   } else {
     return "<html>"
            "<head><meta http-equiv=\"refresh\" content=\"10;url=/config\"/>"
-           "<title>Config: " + deviceName + "</title>"
+           "<title>Main:" + deviceName + "</title>"
            "</head>"
            "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>"
-           "<hr><h3 " + fg + ">Day:Time " + getLocalTime() + "</h3>";
+           "<hr><h3 " + fg + ">Date: " + getLocalTime() + " [" + String(offsetMins()) + "] " + String(minutesAtStartTime + (millis() / msPerMin)) + "</h3>";
   }
 }
 
@@ -158,16 +166,16 @@ String connectionHtml() {
 String statusHtml() {
   return "<hr><table " + fg + ">"
          "<tr>"
-         "<th>Device</th><th>Status</th><th>For</th><th>Clear</th></th><th>Boost</th><th>Boost</th>"
+         "<th>Device</th><th>Now</th><th>For</th><th>Clear</th></th><th>Boost</th><th>Boost</th>"
          "</tr><tr>"
-         "<td>Central Heating:</td>"
+         "<td>" + deviceOneShort + "</td>"
          "<td>" + deviceOneState + "</td>"
          "<td>" + calcMinutes(deviceOneOffset) + "</td>" +
          deviceButtonHtml("ch=0", "Off") +
          deviceButtonHtml("ch=60", "1 Hour") +
          deviceButtonHtml("ch=120", "2 Hour") +
          "</tr><tr>"
-         "<td>Hot Water</td>"
+         "<td>" + deviceTwoShort + "</td>"
          "<td>" + deviceTwoState + "</td>"
          "<td>" + calcMinutes(deviceTwoOffset) + "</td>" +
          deviceButtonHtml("hw=0", "Off") +
@@ -260,6 +268,7 @@ void setup(void) {
         Serial.println(getLocalTime());
       }
     }
+    minutesAtStartTime = offsetMins();
   }
 
   delay(msPerHalfSecond);
@@ -284,6 +293,8 @@ void setup(void) {
 
 void loop(void) {
   unsigned long ms = millis();
+  unsigned long minute = minutesAtStartTime + (ms / msPerMin);
+
   checkDevice(ms);
 
   if (timeToRestart != 0) {
@@ -487,9 +498,16 @@ String getLocalTime() {
   if (!getLocalTime(&timeinfo)) {
     return "?: ?:?:?";
   }
-  return String(timeinfo.tm_wday) + ": " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
+  return days[timeinfo.tm_wday] + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min);
 }
 
+unsigned long offsetMins() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return 0;
+  }
+  return ((timeinfo.tm_wday * msPerDay) + (timeinfo.tm_hour * msPerHour) + (timeinfo.tm_min * msPerMin)) / msPerMin;
+}
 
 /*
    Check for a boosted device making sure it is off or on
@@ -559,7 +577,7 @@ void startTransaction(unsigned int delayMs) {
 String processDeviceArgs() {
   for (uint8_t i = 0; i < server.args(); i++) {
     String divName = server.argName(i);
-    unsigned int divOffset = millis() + (server.arg(i).toInt() * msPerSecond);
+    unsigned int divOffset = millis() + (server.arg(i).toInt() * msPerMin);
     if (divName == deviceOneName) {
       deviceOneOffset = divOffset;
       Serial.println("Div:" + deviceOneName + "=" + deviceOneOffset);
@@ -581,11 +599,11 @@ String calcMinutes(unsigned long ms) {
   if (ms == 0) {
     return "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;?&nbsp;&nbsp;&nbsp;&nbsp;";
   }
-  unsigned long diff = ms - millis();
+  unsigned long diff = (ms - millis()) + 1;
   if (diff < 0) {
     diff = 0;
   }
-  return String(diff / msPerSecond) + " Mins&nbsp;";
+  return String((diff / msPerMin)) + " Mins&nbsp;";
 }
 /*
    ---------------------------------------------------------------------------------
