@@ -61,6 +61,8 @@ const unsigned long msPerSecond = 1000;
 const unsigned long msPerMin = 60 * msPerSecond;
 const unsigned long msPerHour = 60 * msPerMin;
 const unsigned long msPerDay = msPerHour * 24;
+const unsigned long minsPerHour = 60;
+const unsigned long minsPerDay = minsPerHour * 24;
 
 const unsigned long msNtpFetchDelay = msPerSecond * 3;
 const String undefined = "-undefined-";
@@ -74,18 +76,17 @@ const String emptyStr = "";
 /*
    Define Static HTML Elements
 */
-const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
 const String deviceName = "HeatingController";
 const String deviceDesc = "ESP32 Heating Controller";
 const String appJson = "application/json";
 const String txtHtml = "text/html";
 const String fg = " style=\"color:White;\" ";
-const String fgerr = " style=\"color:red;\" ";
 const String htmlEnd = "</body></html>";
 const String resetHtml = "<hr><h3 " + fg + ">Reset Device:</h3>"
-                         "<input type=\"button\" onclick=\"location.href='/reset';\" value=\"Reset Device\" />";
+                         "<input type=\"button\" onclick=\"location.href='/resetAlert';\" value=\"Reset Device\" />";
 const String factorySetHtml = "<hr><h3 " + fg + ">Warning:</h3>"
-                              "<input type=\"button\" onclick=\"location.href='/factorySettings';\" value=\"Reset to HeatingController to factory settings\" />";
+                              "<input type=\"button\" onclick=\"location.href='/factorySettingsAlert';\" value=\"Reset to HeatingController to factory settings\" />";
 
 /*
    Working storage
@@ -93,10 +94,10 @@ const String factorySetHtml = "<hr><h3 " + fg + ">Warning:</h3>"
 unsigned long timeToRestart = 0;
 unsigned long activityLedOff = millis();
 unsigned long connectLedTime = millis();
-unsigned long deviceOneOffset = 0;
-unsigned long deviceTwoOffset = 0;
-
-unsigned long minutesAtStartTime = 0;
+unsigned long deviceOneOffsetMins = 0;
+unsigned long deviceTwoOffsetMins = 0;
+unsigned long minutesReference = 0;
+unsigned long millisReference = 0;
 
 boolean connectFlipFlop = true;
 boolean accesspointMode = false;
@@ -105,26 +106,23 @@ boolean displayConfig = false;
 boolean htmlMode = true;
 String deviceOneState = offStr;
 String deviceTwoState = offStr;
-int responseCode = 0;
 
 /*
    Define dynamic HTML Strings
 */
 
-String configHtmlHead() {
+String configHtmlHead(boolean refresh) {
   if (displayConfig) {
-    return "<html>"
-           "<head>"
-           "<title>Config: " + deviceName + "</title>"
-           "</head>"
+    return "<html><head><title>Config: " + deviceName + "</title></head>"
            "<body style=\"background-color:DarkSalmon;\"><h2 " + fg + ">Config: " + deviceDesc + "</h2>";
   } else {
-    return "<html>"
-           "<head><meta http-equiv=\"refresh\" content=\"10;url=/config\"/>"
-           "<title>Main:" + deviceName + "</title>"
-           "</head>"
+    String refreshStr = "";
+    if (refresh) {
+      refreshStr = "<meta http-equiv=\"refresh\" content=\"10;url=/config\"/>";
+    }
+    return "<html><head>" + refreshStr + "<title>Main:" + deviceName + "</title></head>"
            "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>"
-           "<hr><h3 " + fg + ">Date: " + getLocalTime() + " [" + String(offsetMins()) + "] " + String(minutesAtStartTime + (millis() / msPerMin)) + "</h3>";
+           "<hr><h3 " + fg + ">Date: " + String(getLocalTime()) + "]" + "</h3>";
   }
 }
 
@@ -136,22 +134,30 @@ String switchHtml(String cm) {
          "<input type=\"button\" onclick=\"location.href='/switch';\" value=\"Switch to " + cm + " Mode\" />";
 }
 
+String alertHtml(String msg, String b1, String b2, String a1, String a2) {
+  String b1Html = "";
+  if (b1 != "") {
+    b1Html = "<input type=\"button\" onclick=\"location.href='/" + a1 + "';\" value=\"" + b1 + "\" /></td>";
+  }
+  String b2Html = "";
+  if (b2 != "") {
+    b2Html = "<input type=\"button\" onclick=\"location.href='/" + a2 + "';\" value=\"" + b2 + "\" /></td>";
+  }
+  return configHtmlHead(false) + messageHtml(msg) + b1Html + b2Html + htmlEnd;
+}
+
 String messageHtml(String msg) {
   if (msg == "") {
     return "";
   }
-  if (responseCode == 0) {
-    return "<hr><h3 " + fg + ">" + msg + "</h3>";
-  } else {
-    return "<hr><h3 " + fgerr + ">Error:" + String(responseCode) + msg + "</h3>";
-  }
+  return "<hr><h3 " + fg + ">Message:" + msg + "</h3>";
 }
 
 String configHtml(String msg) {
   if (displayConfig) {
-    return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + htmlEnd;
+    return configHtmlHead(false) + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + htmlEnd;
   }
-  return configHtmlHead() + messageHtml(msg) + statusHtml() + switchHtml("Config") + htmlEnd;
+  return configHtmlHead(true) + messageHtml(msg) + statusHtml() + switchHtml("Config") + htmlEnd;
 }
 
 String connectionHtml() {
@@ -166,21 +172,25 @@ String connectionHtml() {
 String statusHtml() {
   return "<hr><table " + fg + ">"
          "<tr>"
-         "<th>Device</th><th>Now</th><th>For</th><th>Clear</th></th><th>Boost</th><th>Boost</th>"
+         "<th>Device</th><th>Now</th><th>For</th><th>Clear</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
          "</tr><tr>"
          "<td>" + deviceOneShort + "</td>"
          "<td>" + deviceOneState + "</td>"
-         "<td>" + calcMinutes(deviceOneOffset) + "</td>" +
+         "<td>" + calcMinutesToGo(deviceOneOffsetMins) + "</td>" +
          deviceButtonHtml("ch=0", "Off") +
          deviceButtonHtml("ch=60", "1 Hour") +
          deviceButtonHtml("ch=120", "2 Hour") +
+         deviceButtonHtml("ch=240", "4 Hour") +
+         deviceButtonHtml("ch=H24", "Midnight") +
          "</tr><tr>"
          "<td>" + deviceTwoShort + "</td>"
          "<td>" + deviceTwoState + "</td>"
-         "<td>" + calcMinutes(deviceTwoOffset) + "</td>" +
+         "<td>" + calcMinutesToGo(deviceTwoOffsetMins) + "</td>" +
          deviceButtonHtml("hw=0", "Off") +
          deviceButtonHtml("hw=60", "1 Hour") +
          deviceButtonHtml("hw=120", "2 Hour") +
+         deviceButtonHtml("hw=240", "4 Hour") +
+         deviceButtonHtml("hw=H24", "Midnight") +
          "</tr>"
          "</table>";
 }
@@ -260,15 +270,18 @@ void setup(void) {
       configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
       struct tm timeinfo;
       if (!getLocalTime(&timeinfo)) {
-        Serial.println("Failed");
         delay(msNtpFetchDelay);
+        minutesReference = 0;
+        millisReference = 0;
+        Serial.println("Failed");
       } else {
         timeNotFetched = 0;
         digitalWrite(connectLed, LOW);
+        minutesReference = minutesFromLocalTime();
+        millisReference = millis();
         Serial.println(getLocalTime());
       }
     }
-    minutesAtStartTime = offsetMins();
   }
 
   delay(msPerHalfSecond);
@@ -278,8 +291,9 @@ void setup(void) {
   server.on("/device", handleDeviceHtml);
   server.on("/switch", handleSwitchHtml);
   server.on("/reset", handleResetHtml);
-
+  server.on("/resetAlert", handleResetAlertHtml);
   server.on("/factorySettings", handleFactorySettings);
+  server.on("/factorySettingsAlert", handleFactorySettingsAlert);
   server.onNotFound(handleNotFound);
   server.begin();
 
@@ -293,36 +307,35 @@ void setup(void) {
 
 void loop(void) {
   unsigned long ms = millis();
-  unsigned long minute = minutesAtStartTime + (ms / msPerMin);
-
-  checkDevice(ms);
-
-  if (timeToRestart != 0) {
-    if (ms > timeToRestart) {
-      performRestart(restartInApMode, "TIMEOUT");
-    }
-  }
-
-  if (accesspointMode) {
-    if (connectLedTime < ms) {
-      digitalWrite(connectLed, connectFlipFlop);
-      connectFlipFlop = !connectFlipFlop;
-      if (connectFlipFlop) {
-        connectLedTime = millis() + 600;
-      } else {
-        connectLedTime = millis() + 100;
-      }
-    }
-  }
-
-  if (ms > activityLedOff) {
-    digitalWrite(activityLed, LOW);
-  }
-
-  if (digitalRead(forceAPModeIn) == LOW) {
-    performRestart(true, "BUTTON");
-  }
-
+//
+//  checkDevice(minutes());
+//
+//  if (timeToRestart != 0) {
+//    if (ms > timeToRestart) {
+//      performRestart(restartInApMode, "TIMEOUT");
+//    }
+//  }
+//
+//  if (accesspointMode) {
+//    if (connectLedTime < ms) {
+//      digitalWrite(connectLed, connectFlipFlop);
+//      connectFlipFlop = !connectFlipFlop;
+//      if (connectFlipFlop) {
+//        connectLedTime = millis() + 600;
+//      } else {
+//        connectLedTime = millis() + 100;
+//      }
+//    }
+//  }
+//
+//  if (ms > activityLedOff) {
+//    digitalWrite(activityLed, LOW);
+//  }
+//
+//  if (digitalRead(forceAPModeIn) == LOW) {
+//    performRestart(true, "BUTTON");
+//  }
+//
   server.handleClient();
 }
 
@@ -342,9 +355,15 @@ void handleDeviceHtml() {
   server.send(200, txtHtml, configHtml(processDeviceArgs()));
 }
 
+void handleResetAlertHtml() {
+  startTransaction(msPerSecond);
+  server.send(200, txtHtml, alertHtml("OK to Restart or CANCEL." , "OK", "CANCEL", "reset", "config"));
+}
+
 void handleResetHtml() {
   startTransaction(msPerSecond);
-  initRestart(false, msPerSecond);
+  initRestart(false, msPerSecond * 3);
+  server.send(200, txtHtml, configHtml("Restart requested"));
 }
 
 void handleSwitchHtml() {
@@ -389,6 +408,11 @@ void handleStoreConfigDataAndRestart() {
    Request Handler Method - used to read data in preferences from http request query parameters
    For example /factorySettings
 */
+void handleFactorySettingsAlert() {
+  startTransaction(msPerSecond);
+  server.send(200, txtHtml, alertHtml("OK to Reset To Factory Settings or CANCEL." , "OK", "CANCEL", "factorySettings", "config"));
+}
+
 void handleFactorySettings() {
   startTransaction(msPerHalfSecond);
   preferences.begin(appId, false);
@@ -400,18 +424,7 @@ void handleFactorySettings() {
 
 void handleNotFound() {
   startTransaction(msPerHalfSecond);
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  server.send(404, "text/plain", message);
+  server.send(404, txtHtml, alertHtml("ERROR: URI Not Found: " + server.uri(), "OK", "", "config", ""));
 }
 /*
    ---------------------------------------------------------------------------------
@@ -501,39 +514,49 @@ String getLocalTime() {
   return days[timeinfo.tm_wday] + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min);
 }
 
-unsigned long offsetMins() {
+int minutesFromLocalTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
     return 0;
   }
-  return ((timeinfo.tm_wday * msPerDay) + (timeinfo.tm_hour * msPerHour) + (timeinfo.tm_min * msPerMin)) / msPerMin;
+  return calcMinsFromTime(timeinfo.tm_wday, timeinfo.tm_hour, timeinfo.tm_min);
 }
 
-/*
-   Check for a boosted device making sure it is off or on
-*/
-void checkDevice(unsigned long tim) {
-  if (deviceOneOffset > 0) {
-    if (deviceOneOffset > tim) {
-      digitalWrite(deviceOnePin, HIGH);
-      deviceOneState = onStr;
-    } else {
-      digitalWrite(deviceOnePin, LOW);
-      deviceOneState = offStr;
-      deviceOneOffset = 0;
-    }
-  }
-  if (deviceTwoOffset > 0) {
-    if (deviceTwoOffset > tim) {
-      digitalWrite(deviceTwoPin, HIGH);
-      deviceTwoState = onStr;
-    } else {
-      digitalWrite(deviceTwoPin, LOW);
-      deviceTwoState = offStr;
-      deviceTwoOffset = 0;
-    }
-  }
+int minutes() {
+  return minutesReference + ((millis() - millisReference) / msPerMin);
 }
+
+int calcMinsFromTime(int day, int hour, int mins) {
+  return (day * minsPerDay) + (hour * minsPerHour) + mins;
+}
+
+int calcMinsFromHour(int hour, int mins) {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return 0;
+  }
+  return calcMinsFromTime(timeinfo.tm_wday, hour, mins);
+}
+
+int calcMinsFromMins(int mins) {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return 0;
+  }
+  return calcMinsFromTime(timeinfo.tm_wday, timeinfo.tm_hour, mins);
+}
+
+String calcMinutesToGo(unsigned long mins) {
+  if (mins == 0) {
+    return "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;?&nbsp;&nbsp;&nbsp;&nbsp;";
+  }
+  unsigned long diff = (mins - minutes()) + 1;
+  if (diff < 0) {
+    diff = 0;
+  }
+  return String(diff) + " Mins&nbsp;";
+}
+
 
 void initRestart(boolean apMode, unsigned long delayRestart) {
   if (delayRestart == 0) {
@@ -563,7 +586,6 @@ void performRestart(boolean resInApMode, String desc) {
 */
 void startTransaction(unsigned int delayMs) {
   digitalWrite(activityLed, HIGH);
-  responseCode = 0;
   activityLedOff = millis() + delayMs;
   if (accesspointMode) {
     timeToRestart = millis() + msPerMin;
@@ -575,36 +597,60 @@ void startTransaction(unsigned int delayMs) {
    Calculates offsets in MS for the device OFF
 */
 String processDeviceArgs() {
+  int minutesNow = minutes();
   for (uint8_t i = 0; i < server.args(); i++) {
+
     String divName = server.argName(i);
-    unsigned int divOffset = millis() + (server.arg(i).toInt() * msPerMin);
+    String divVal = server.arg(i);
+
+    int divAbsolute;
+    if (divVal.startsWith("H")) {
+      divAbsolute = calcMinsFromHour(divVal.substring(1).toInt(), 0);
+    } else {
+      divAbsolute = (minutesNow + divVal.toInt()) - 1;
+    }
+    if (divAbsolute < 0) {
+      divAbsolute = 0;
+    }
     if (divName == deviceOneName) {
-      deviceOneOffset = divOffset;
-      Serial.println("Div:" + deviceOneName + "=" + deviceOneOffset);
+      deviceOneOffsetMins = divAbsolute;
+      Serial.println("Div:" + deviceOneName + "=" + deviceOneOffsetMins);
     }
     if (divName == deviceTwoName) {
-      deviceTwoOffset = divOffset;
-      Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffset);
+      deviceTwoOffsetMins = divAbsolute;
+      Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffsetMins);
     }
   }
-  checkDevice(millis());
+  checkDevice(minutesNow);
   return deviceOneDesc + " " + deviceOneState + ". " + deviceTwoDesc + " " + deviceTwoState + ".";
 }
 
-void setErrorData(int code) {
-  responseCode = code;
+/*
+   Check for a boosted device making sure it is off or on
+*/
+void checkDevice(int mins) {
+  if (deviceOneOffsetMins > 0) {
+    if (deviceOneOffsetMins > mins) {
+      digitalWrite(deviceOnePin, HIGH);
+      deviceOneState = onStr;
+    } else {
+      digitalWrite(deviceOnePin, LOW);
+      deviceOneState = offStr;
+      deviceOneOffsetMins = 0;
+    }
+  }
+  if (deviceTwoOffsetMins > 0) {
+    if (deviceTwoOffsetMins > mins) {
+      digitalWrite(deviceTwoPin, HIGH);
+      deviceTwoState = onStr;
+    } else {
+      digitalWrite(deviceTwoPin, LOW);
+      deviceTwoState = offStr;
+      deviceTwoOffsetMins = 0;
+    }
+  }
 }
 
-String calcMinutes(unsigned long ms) {
-  if (ms == 0) {
-    return "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;?&nbsp;&nbsp;&nbsp;&nbsp;";
-  }
-  unsigned long diff = (ms - millis()) + 1;
-  if (diff < 0) {
-    diff = 0;
-  }
-  return String((diff / msPerMin)) + " Mins&nbsp;";
-}
 /*
    ---------------------------------------------------------------------------------
    Events for the HTTP Server when it connects or dis-connects from the router
