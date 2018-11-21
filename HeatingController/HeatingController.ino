@@ -2,9 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WebServer.h>
-#include <ESPmDNS.h>
 #include <Preferences.h>
-#include <stdio.h>
 #include "time.h"
 /*
    TODO: error Page
@@ -13,14 +11,19 @@
 
    Device controll constants
 */
-const int deviceOnePin = 16;
-const String deviceOneName = "ch";
-const String deviceOneDesc = "Central Heating:";
-const String deviceOneShort = "Heating:";
-const int deviceTwoPin = 17;
-const String deviceTwoName = "hw";
-const String deviceTwoDesc = "Hot Water:";
-const String deviceTwoShort = "Water:";
+const String deviceName = "HeatingController";
+const String deviceDesc = "ESP32 Heating Controller";
+
+const char deviceDataChar = '0'; // Char '0'
+const int deviceOneNum = 0;
+const int deviceTwoNum = 1;
+const String deviceDescList[] = {"Central Heating", "Hot Water"};
+const String deviceShortList[] = {"Heating:", "Water:"};
+const String deviceNameList[] = {"ch:", "hw:"};
+const int devicePinList[] = {16, 17};
+const int deviceOnBitList[] = {1, 2};
+const int deviceFlagBitList[] = {4, 8};
+
 /*
    Define the pin numbers. Device Pin numbers defined above!
 */
@@ -32,6 +35,8 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 0;
 const int   daylightOffset_sec = 3600;
 
+const int slots = 96;
+const int daysInWeek = 7;
 /*
    Access Point definitions
 */
@@ -63,8 +68,9 @@ const unsigned long msPerHour = 60 * msPerMin;
 const unsigned long msPerDay = msPerHour * 24;
 const unsigned long minsPerHour = 60;
 const unsigned long minsPerDay = minsPerHour * 24;
-
 const unsigned long msNtpFetchDelay = msPerSecond * 3;
+const unsigned long minsPerSlot = 15;
+
 const String undefined = "-undefined-";
 const String plainParamName = "plain";
 const String trueStr = "true";
@@ -76,17 +82,26 @@ const String emptyStr = "";
 /*
    Define Static HTML Elements
 */
+const int daySun = 0;
+const int dayMon = 1;
+const int dayTue = 2;
+const int dayWed = 3;
+const int dayThu = 4;
+const int dayFri = 5;
+const int daySat = 6;
+
 const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
-const String deviceName = "HeatingController";
-const String deviceDesc = "ESP32 Heating Controller";
+const String daysFull[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
 const String appJson = "application/json";
 const String txtHtml = "text/html";
 const String fg = " style=\"color:White;\" ";
+const String fgp = " style=\"background-color:DarkSalmon;\" ";
+const String boostedHtml = " is <span " + fgp + ">&nbsp;BOOSTED&nbsp;</span> for ";
 const String htmlEnd = "</body></html>";
-const String resetHtml = "<hr><h3 " + fg + ">Reset Device:</h3>"
-                         "<input type=\"button\" onclick=\"location.href='/resetAlert';\" value=\"Reset Device\" />";
+const String resetHtml = "<hr><h3 " + fg + ">Reset " + deviceName + ":</h3>"
+                         "<input type=\"button\" onclick=\"location.href='/resetAlert';\" value=\"Reset Now\" />";
 const String factorySetHtml = "<hr><h3 " + fg + ">Warning:</h3>"
-                              "<input type=\"button\" onclick=\"location.href='/factorySettingsAlert';\" value=\"Reset to HeatingController to factory settings\" />";
+                              "<input type=\"button\" onclick=\"location.href='/factorySettingsAlert';\" value=\"Reset to " + deviceName + " to factory settings\" />";
 
 /*
    Working storage
@@ -106,15 +121,25 @@ boolean displayConfig = false;
 boolean htmlMode = true;
 String deviceOneState = offStr;
 String deviceTwoState = offStr;
+String deviceSlotsList[daysInWeek];
 
 /*
    Define dynamic HTML Strings
 */
 
 String configHtmlHead(boolean refresh) {
+  String m1 = "";
+  if (deviceOneOffsetMins > 0) {
+    m1 = "<h3 " + fg + " >" + deviceDescList[deviceOneNum] + boostedHtml + calcMinutesToGo(deviceOneOffsetMins) + ".&nbsp;" + boostButtonHtml(deviceNameList[deviceOneNum] + "=0", "Remove BOOST") + "</h3>";
+  }
+  String m2 = "";
+  if (deviceTwoOffsetMins > 0) {
+    m2 = "<h3 " + fg + " >" + deviceDescList[deviceTwoNum] + boostedHtml + calcMinutesToGo(deviceTwoOffsetMins) + ".&nbsp;" + boostButtonHtml(deviceNameList[deviceTwoNum] + "=0", "Remove BOOST") + "</h3>";
+  }
+
   if (displayConfig) {
     return "<html><head><title>Config: " + deviceName + "</title></head>"
-           "<body style=\"background-color:DarkSalmon;\"><h2 " + fg + ">Config: " + deviceDesc + "</h2>";
+           "<body style=\"background-color:DarkSalmon;\"><h1 " + fg + ">Config: " + deviceDesc + "</h1>" + m1 + m2;
   } else {
     String refreshStr = "";
     if (refresh) {
@@ -122,7 +147,7 @@ String configHtmlHead(boolean refresh) {
     }
     return "<html><head>" + refreshStr + "<title>Main:" + deviceName + "</title></head>"
            "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>"
-           "<hr><h3 " + fg + ">Date: " + String(getLocalTime()) + "]" + "</h3>";
+           "<hr><h1 " + fg + ">Date: " + String(getLocalTime()) + "</h1>" + m1 + m2;
   }
 }
 
@@ -157,7 +182,7 @@ String configHtml(String msg) {
   if (displayConfig) {
     return configHtmlHead(false) + messageHtml(msg) + statusHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + htmlEnd;
   }
-  return configHtmlHead(true) + messageHtml(msg) + statusHtml() + switchHtml("Config") + htmlEnd;
+  return configHtmlHead(true) + messageHtml(msg) + statusHtml() + dayButtonsHtml() + switchHtml("Config") + htmlEnd;
 }
 
 String connectionHtml() {
@@ -170,38 +195,100 @@ String connectionHtml() {
 }
 
 String statusHtml() {
-  return "<hr><table " + fg + ">"
+  String d1 = deviceNameList[deviceOneNum];
+  String d2 = deviceNameList[deviceTwoNum];
+  return "<hr><h2 " + fg + " >Boost (Overrides the schedule):</h2><table " + fg + ">"
          "<tr>"
-         "<th>Device</th><th>Now</th><th>For</th><th>Clear</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
+         "<th>Device</th><th>Now</th><th>For</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
          "</tr><tr>"
-         "<td>" + deviceOneShort + "</td>"
+         "<td>" + deviceShortList[deviceOneNum] + "</td>"
          "<td>" + deviceOneState + "</td>"
-         "<td>" + calcMinutesToGo(deviceOneOffsetMins) + "</td>" +
-         deviceButtonHtml("ch=0", "Off") +
-         deviceButtonHtml("ch=60", "1 Hour") +
-         deviceButtonHtml("ch=120", "2 Hour") +
-         deviceButtonHtml("ch=240", "4 Hour") +
-         deviceButtonHtml("ch=H24", "Midnight") +
+         "<td>" + calcMinutesToGo(deviceOneOffsetMins) + "&nbsp;</td>" +
+         boostButtonHtml(d1 + "=60", "1 Hour") +
+         boostButtonHtml(d1 + "=120", "2 Hour") +
+         boostButtonHtml(d1 + "=240", "4 Hour") +
+         boostButtonHtml(d1 + "=H24", "Midnight") +
          "</tr><tr>"
-         "<td>" + deviceTwoShort + "</td>"
+         "<td>" + deviceShortList[deviceTwoNum] + "</td>"
          "<td>" + deviceTwoState + "</td>"
-         "<td>" + calcMinutesToGo(deviceTwoOffsetMins) + "</td>" +
-         deviceButtonHtml("hw=0", "Off") +
-         deviceButtonHtml("hw=60", "1 Hour") +
-         deviceButtonHtml("hw=120", "2 Hour") +
-         deviceButtonHtml("hw=240", "4 Hour") +
-         deviceButtonHtml("hw=H24", "Midnight") +
+         "<td>" + calcMinutesToGo(deviceTwoOffsetMins) + "&nbsp;</td>" +
+         boostButtonHtml(d2 + "=60", "1 Hour") +
+         boostButtonHtml(d2 + "=120", "2 Hour") +
+         boostButtonHtml(d2 + "=240", "4 Hour") +
+         boostButtonHtml(d2 + "=H24", "Midnight") +
          "</tr>"
          "</table>";
 }
 
-String deviceButtonHtml(String devtim, String desc) {
-  return "<td><input type=\"button\" onclick=\"location.href='/device?" + devtim + "';\" value=\"" + desc + "\" /></td>";
+String boostButtonHtml(String deviceTime, String desc) {
+  return "<td><input type=\"button\" onclick=\"location.href='/boost?" + deviceTime + "';\" value=\"" + desc + "\" /></td>";
 }
 
-void setup(void) {
-  initRestart(false, 0);
+String dayButtonsHtml() {
+  return "<hr><h2 " + fg + " >Schedule (Select a day to change):</h2>" +
+         "<table " + fg + ">"
+         "<tr>" +
+         "<td>" + deviceShortList[deviceOneNum] + "</td>" + dayButtonRowHtml(deviceOneNum) +
+         "</tr>" +
+         "<tr>" +
+         "<td>" + deviceShortList[deviceTwoNum] + "</td>" + dayButtonRowHtml(deviceTwoNum) +
+         "</tr>" +
+         "</table>";
+}
 
+String dayButtonRowHtml(int device) {
+  return dayButtonHtml(daySun, device) +
+         dayButtonHtml(dayMon, device) +
+         dayButtonHtml(dayTue, device) +
+         dayButtonHtml(dayWed, device) +
+         dayButtonHtml(dayThu, device) +
+         dayButtonHtml(dayFri, device) +
+         dayButtonHtml(daySat, device);
+}
+
+String dayButtonHtml(int day, int device) {
+  return "<td><input type=\"button\" onclick=\"location.href='/dispDay?day=" + String(day) + "&dev=" + String(device) + "';\" value=\"" + days[day] + "\" /></td>";
+}
+
+
+String schedulePageHtml(int day, int dev) {
+  return configHtmlHead(false) + dayButtonsHtml() + scheduleHtml(day, dev) + htmlEnd;
+}
+
+String scheduleHtml(int day, int dev) {
+  return "<hr><h2 " + fg + " >Times for " + deviceDescList[dev] + " on " + daysFull[day] + "</h2>" +
+         "<table border=\"1\" width=\"400px\">" +
+         timeCbHtmlAll(day, dev) +
+         "</table>" +
+         "<br><input type=\"button\" onclick=\"location.href='/config';\" value=\"DONE!\"/>";
+}
+
+String timeCbHtmlAll(int day, int dev) {
+  String ofs = "";
+  int offset = 0;
+  for (uint8_t y = 0; y < 24; y++) {
+    ofs += "<tr>";
+    for (uint8_t x = 0; x < 4; x++) {
+      ofs += timeCbHtml(offset, day, dev);
+      offset++;
+    }
+    ofs += "</tr>";
+  }
+  return ofs;
+}
+
+String timeCbHtml(int slot, int day, int dev) {
+  String s = "<td>";
+  if (isDeviceFlagOn(slot, day, dev)) {
+    s = "<td " + fgp + ">";
+  }
+  return s + "<input type=\"checkbox\" " + checked(slot, day, dev) + " onclick=\"location.href='/setTime?ofs=" + slot + "&day=" + day + "&dev=" + dev + "'\">" + osfToTime(slot * minsPerSlot) + "</td>";
+}
+
+
+void setup(void) {
+
+  initRestart(false, 0);
   Serial.begin(115200);
   delay(msPerHalfSecond);
 
@@ -210,17 +297,28 @@ void setup(void) {
 
   pinMode(activityLed, OUTPUT);
   pinMode(connectLed, OUTPUT);
-  pinMode(deviceOnePin, OUTPUT);
-  pinMode(deviceTwoPin, OUTPUT);
+  pinMode(devicePinList[deviceOneNum], OUTPUT);
+  pinMode(devicePinList[deviceTwoNum], OUTPUT);
 
   digitalWrite(activityLed, LOW);
 
-  digitalWrite(deviceOnePin, LOW);
+  digitalWrite(devicePinList[deviceOneNum], LOW);
   deviceOneState = offStr;
-  digitalWrite(deviceTwoPin, LOW);
+  digitalWrite(devicePinList[deviceTwoNum], LOW);
   deviceTwoState = offStr;
 
-  Serial.println();
+  for (int day = 0; day < daysInWeek; day++) {
+    String sl = readPreference("SL" + String(day), "");
+    if (sl == "") {
+      Serial.println("Slot '" + days[day] + "' Created");
+      for (int i = 0; i < slots; i++) {
+        sl += deviceDataChar;
+      }
+    }
+    deviceSlotsList[day] = sl;
+  }
+
+  Serial.println("Slots defined:");
   Serial.print("AP FLAG: ");
   Serial.println(readPreference(rebootAPFlagName, falseStr));
   if (readPreference(rebootAPFlagName, falseStr) == trueStr) {
@@ -266,14 +364,22 @@ void setup(void) {
     digitalWrite(connectLed, HIGH);
     Serial.print("Fetching time from NTP:");
     boolean timeNotFetched = true;
+    int timeNotFetchedCount = 0;
     while (timeNotFetched) {
       configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
       struct tm timeinfo;
       if (!getLocalTime(&timeinfo)) {
         delay(msNtpFetchDelay);
+        digitalWrite(connectLed, LOW);
+        delay(msNtpFetchDelay);
+        digitalWrite(connectLed, HIGH);
         minutesReference = 0;
         millisReference = 0;
         Serial.println("Failed");
+        timeNotFetchedCount++;
+        if (timeNotFetchedCount > 2) {
+          performRestart(false, "NTP FAILED");
+        }
       } else {
         timeNotFetched = 0;
         digitalWrite(connectLed, LOW);
@@ -288,7 +394,9 @@ void setup(void) {
   server.on("/", handleNotFound);
   server.on("/store", handleStoreConfigDataAndRestart);
   server.on("/config", handleConfigHtml);
-  server.on("/device", handleDeviceHtml);
+  server.on("/dispDay", handleDispDayHtml);
+  server.on("/setTime", handleSetTimeHtml);
+  server.on("/boost", handleBoostHtml);
   server.on("/switch", handleSwitchHtml);
   server.on("/reset", handleResetHtml);
   server.on("/resetAlert", handleResetAlertHtml);
@@ -297,45 +405,45 @@ void setup(void) {
   server.onNotFound(handleNotFound);
   server.begin();
 
+  digitalWrite(connectLed, LOW);
   if (accesspointMode) {
     Serial.println("HTTP Access Point started");
   } else {
     Serial.println("HTTP service started");
   }
-  digitalWrite(connectLed, LOW);
 }
 
 void loop(void) {
   unsigned long ms = millis();
-//
-//  checkDevice(minutes());
-//
-//  if (timeToRestart != 0) {
-//    if (ms > timeToRestart) {
-//      performRestart(restartInApMode, "TIMEOUT");
-//    }
-//  }
-//
-//  if (accesspointMode) {
-//    if (connectLedTime < ms) {
-//      digitalWrite(connectLed, connectFlipFlop);
-//      connectFlipFlop = !connectFlipFlop;
-//      if (connectFlipFlop) {
-//        connectLedTime = millis() + 600;
-//      } else {
-//        connectLedTime = millis() + 100;
-//      }
-//    }
-//  }
-//
-//  if (ms > activityLedOff) {
-//    digitalWrite(activityLed, LOW);
-//  }
-//
-//  if (digitalRead(forceAPModeIn) == LOW) {
-//    performRestart(true, "BUTTON");
-//  }
-//
+
+  checkDevice(minutes());
+
+  if (timeToRestart != 0) {
+    if (ms > timeToRestart) {
+      performRestart(restartInApMode, "TIMEOUT");
+    }
+  }
+
+  if (accesspointMode) {
+    if (connectLedTime < ms) {
+      digitalWrite(connectLed, connectFlipFlop);
+      connectFlipFlop = !connectFlipFlop;
+      if (connectFlipFlop) {
+        connectLedTime = millis() + 600;
+      } else {
+        connectLedTime = millis() + 100;
+      }
+    }
+  }
+
+  if (ms > activityLedOff) {
+    digitalWrite(activityLed, LOW);
+  }
+
+  if (digitalRead(forceAPModeIn) == LOW) {
+    performRestart(true, "BUTTON");
+  }
+
   server.handleClient();
 }
 
@@ -350,9 +458,45 @@ void handleConfigHtml() {
   server.send(200, "text/html", configHtml(""));
 }
 
-void handleDeviceHtml() {
+void handleSetTimeHtml() {
+  int ofs = -1;
+  int day = -1;
+  int dev = -1;
+  for (uint8_t i = 0; i < server.args(); i++) {
+    if (server.argName(i) == "ofs") {
+      ofs = server.arg(i).toInt();
+    }
+    if (server.argName(i) == "day") {
+      day = server.arg(i).toInt();
+    }
+    if (server.argName(i) == "dev") {
+      dev = server.arg(i).toInt();
+    }
+  }
+  if (ofs >= 0) {
+    flipDeviceState(ofs, day, dev);
+  }
+  server.send(200, txtHtml, schedulePageHtml(day, dev));
+}
+
+void handleDispDayHtml() {
   startTransaction(msPerSecond);
-  server.send(200, txtHtml, configHtml(processDeviceArgs()));
+  int day = -1;
+  int dev = -1;
+  for (uint8_t i = 0; i < server.args(); i++) {
+    if (server.argName(i) == "day") {
+      day = server.arg(i).toInt();
+    }
+    if (server.argName(i) == "dev") {
+      dev = server.arg(i).toInt();
+    }
+  }
+  server.send(200, txtHtml, schedulePageHtml(day, dev));
+}
+
+void handleBoostHtml() {
+  startTransaction(msPerSecond);
+  server.send(200, txtHtml, configHtml(processBoostArgs()));
 }
 
 void handleResetAlertHtml() {
@@ -415,9 +559,17 @@ void handleFactorySettingsAlert() {
 
 void handleFactorySettings() {
   startTransaction(msPerHalfSecond);
+
+  String ssid = readPreference(ssidName, emptyStr);
+  String pw = readPreference(passwordName, emptyStr);
+
   preferences.begin(appId, false);
   preferences.clear();
   preferences.end();
+
+  writePreference(ssidName, ssid);
+  writePreference(passwordName, pw);
+
   initRestart(true, msPerSecond);
   server.send(200, txtHtml, configHtml("Reset to Factory Settings: Restarting..."));
 }
@@ -511,7 +663,7 @@ String getLocalTime() {
   if (!getLocalTime(&timeinfo)) {
     return "?: ?:?:?";
   }
-  return days[timeinfo.tm_wday] + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min);
+  return daysFull[timeinfo.tm_wday] + " " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min);
 }
 
 int minutesFromLocalTime() {
@@ -547,16 +699,34 @@ int calcMinsFromMins(int mins) {
 }
 
 String calcMinutesToGo(unsigned long mins) {
-  if (mins == 0) {
+  unsigned long diff = (mins - minutes()) + 1;
+  if ((mins == 0) || (diff < 0)) {
     return "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;?&nbsp;&nbsp;&nbsp;&nbsp;";
   }
-  unsigned long diff = (mins - minutes()) + 1;
-  if (diff < 0) {
-    diff = 0;
+  int h = diff / 60;
+  int m = diff - (h * 60);
+  if (h == 0) {
+    return String(m) + "mins&nbsp;";
   }
-  return String(diff) + " Mins&nbsp;";
+  return String(h) + "h " + String(m) + "m";
 }
 
+String osfToTime(int ofs) {
+  int h = ofs / 60;
+  int m = ofs % 60;
+  String s;
+  if (h < 10) {
+    s = "0" + String(h) + ":";
+  } else {
+    s = String(h) + ":";
+  }
+  if (m < 10) {
+    s += "0" + String(m);
+  } else {
+    s += String(m);
+  }
+  return s;
+}
 
 void initRestart(boolean apMode, unsigned long delayRestart) {
   if (delayRestart == 0) {
@@ -580,6 +750,45 @@ void performRestart(boolean resInApMode, String desc) {
   ESP.restart();
 }
 
+boolean isDeviceOn(int slot, int day, int device) {
+  if ((deviceSlotsList[day].charAt(slot) & deviceOnBitList[device]) != 0) {
+    return true;
+  }
+  return false;
+}
+
+boolean isDeviceFlagOn(int slot, int day, int device) {
+  if ((deviceSlotsList[day].charAt(slot) & deviceFlagBitList[device]) != 0) {
+    return true;
+  }
+  return false;
+}
+
+void flipDeviceState(int slot, int day, int device) {
+  deviceSlotsList[day].setCharAt(slot, deviceSlotsList[day].charAt(slot) ^ deviceOnBitList[device]);
+  boolean flagOn = false;
+  boolean isOn = false;
+  for (int i = 0; i < slots; i++) {
+    isOn = isDeviceOn(i, day, device);
+    if (isOn) {
+      flagOn = ! flagOn;
+    }
+    if (flagOn) {
+      deviceSlotsList[day].setCharAt(i, deviceSlotsList[day].charAt(i) | deviceFlagBitList[device]);
+    } else {
+      deviceSlotsList[day].setCharAt(i, deviceSlotsList[day].charAt(i) & (~deviceFlagBitList[device]));
+    }
+  }
+  writePreference("SL" + String(day), deviceSlotsList[day]);
+}
+
+
+String checked(int slot, int day, int device) {
+  if (isDeviceOn(slot, day, device)) {
+    return "checked";
+  }
+  return "";
+}
 
 /*
    Set activity led. Extends the on time so it can be seen.
@@ -596,7 +805,7 @@ void startTransaction(unsigned int delayMs) {
    Interpret device id and actions from request query parameters.
    Calculates offsets in MS for the device OFF
 */
-String processDeviceArgs() {
+String processBoostArgs() {
   int minutesNow = minutes();
   for (uint8_t i = 0; i < server.args(); i++) {
 
@@ -605,24 +814,28 @@ String processDeviceArgs() {
 
     int divAbsolute;
     if (divVal.startsWith("H")) {
+      //
+      // H prefix is on until a specific hour
+      //
       divAbsolute = calcMinsFromHour(divVal.substring(1).toInt(), 0);
     } else {
+      //
+      // No prefix is on until for the next n minutes
+      //
       divAbsolute = (minutesNow + divVal.toInt()) - 1;
     }
     if (divAbsolute < 0) {
       divAbsolute = 0;
     }
-    if (divName == deviceOneName) {
+    if (divName == deviceNameList[deviceOneNum]) {
       deviceOneOffsetMins = divAbsolute;
-      Serial.println("Div:" + deviceOneName + "=" + deviceOneOffsetMins);
     }
-    if (divName == deviceTwoName) {
+    if (divName == deviceNameList[deviceTwoNum]) {
       deviceTwoOffsetMins = divAbsolute;
-      Serial.println("Div:" + deviceTwoName + "=" + deviceTwoOffsetMins);
     }
   }
   checkDevice(minutesNow);
-  return deviceOneDesc + " " + deviceOneState + ". " + deviceTwoDesc + " " + deviceTwoState + ".";
+  return "";
 }
 
 /*
@@ -631,20 +844,20 @@ String processDeviceArgs() {
 void checkDevice(int mins) {
   if (deviceOneOffsetMins > 0) {
     if (deviceOneOffsetMins > mins) {
-      digitalWrite(deviceOnePin, HIGH);
+      digitalWrite(devicePinList[deviceOneNum], HIGH);
       deviceOneState = onStr;
     } else {
-      digitalWrite(deviceOnePin, LOW);
+      digitalWrite(devicePinList[deviceOneNum], LOW);
       deviceOneState = offStr;
       deviceOneOffsetMins = 0;
     }
   }
   if (deviceTwoOffsetMins > 0) {
     if (deviceTwoOffsetMins > mins) {
-      digitalWrite(deviceTwoPin, HIGH);
+      digitalWrite(devicePinList[deviceTwoNum], HIGH);
       deviceTwoState = onStr;
     } else {
-      digitalWrite(deviceTwoPin, LOW);
+      digitalWrite(devicePinList[deviceTwoNum], LOW);
       deviceTwoState = offStr;
       deviceTwoOffsetMins = 0;
     }
