@@ -149,7 +149,7 @@ String controlStatusList[deviceCount];
 */
 String configHtml(String msg) {
   if (displayConfig) {
-    return configHtmlHead(false) + controlHtml() + messageHtml(msg) + boostHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + htmlEnd;
+    return configHtmlHead(false) + controlHtml() + messageHtml(msg) + boostHtml() + switchHtml("Running") + connectionHtml() + resetHtml + factorySetHtml + setTimeHtml() + htmlEnd;
   }
   return configHtmlHead(true) + controlHtml() + messageHtml(msg) + boostHtml() + scheduleDayHtml() + switchHtml("Config") + htmlEnd;
 }
@@ -291,6 +291,25 @@ String scheduleDayButtonHtml(int day, int device) {
   return "<td><input " + s + " type=\"button\" onclick=\"location.href='/dispDay?day=" + String(day) + "&dev=" + String(device) + "';\" value=\"" + days[day] + "\" /></td>";
 }
 
+String setTimeHtml() {
+  String s = "<hr><form " + fg + " action=\"/settime\"><h2>Override Timer:</h2>";
+  return s + dowDropDownHtml() + hoursDropDownHtml() + "<br><input type=\"submit\" value=\"Set Time\"></form>";
+}
+
+String dowDropDownHtml() {
+  String s = "<select>";
+  for (int i = 0; i< daysInWeek;i++) {
+    s+="<option value=\"D"+days[i]+"\">"+daysFull[i]+"</option>";
+  }
+  return s + "</select>";
+}
+String hoursDropDownHtml() {
+  String s = "<select>";
+  for (int i = 0; i< hoursPerDay;i++) {
+    s+="<option value=\"H"+String(i)+"\">Hour:"+String(i)+"</option>";
+  }
+  return s + "</select>";
+}
 
 String schedulePageHtml(int day, int dev) {
   return configHtmlHead(false) + scheduleDayHtml() + scheduleTimesHtml(day, dev) + htmlEnd;
