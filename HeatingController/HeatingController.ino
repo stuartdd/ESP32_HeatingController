@@ -292,23 +292,20 @@ String scheduleDayButtonHtml(int day, int device) {
 }
 
 String setTimeHtml() {
-  String s = "<hr><form " + fg + " action=\"/settime\"><h2>Override Timer:</h2>";
-  return s + dowDropDownHtml() + hoursDropDownHtml() + "<br><input type=\"submit\" value=\"Set Time\"></form>";
+  String s = "<hr><form " + fg + " action=\"/configtime\"><h2>Override Timer:</h2>";
+  return s + dowDropDownHtml() + timeInputHtml() + "</br></br><input type=\"submit\" value=\"Set Time\"></form>";
 }
 
 String dowDropDownHtml() {
-  String s = "<select>";
-  for (int i = 0; i< daysInWeek;i++) {
-    s+="<option value=\"D"+days[i]+"\">"+daysFull[i]+"</option>";
+  String s = "<h3 " + fg + ">Select a DAY:</h3><select name=\"day\">";
+  for (int i = 0; i < daysInWeek; i++) {
+    s += "<option value=\"" + String(i) + "\">" + daysFull[i] + "</option>";
   }
   return s + "</select>";
 }
-String hoursDropDownHtml() {
-  String s = "<select>";
-  for (int i = 0; i< hoursPerDay;i++) {
-    s+="<option value=\"H"+String(i)+"\">Hour:"+String(i)+"</option>";
-  }
-  return s + "</select>";
+
+String timeInputHtml() {
+  return "<h3 " + fg + ">Enter Time 'hh mm'</h3><input width=\"8\"type=\"text\" name=\"time\" value=\"\">";
 }
 
 String schedulePageHtml(int day, int dev) {
@@ -448,6 +445,7 @@ void setup(void) {
   delay(msPerHalfSecond);
   server.on("/", handleNotFound);
   server.on("/store", handleStoreConfigDataAndRestart);
+  server.on("/configtime", handleConfigTimeHtml);
   server.on("/config", handleConfigHtml);
   server.on("/dispDay", handleDispDayHtml);
   server.on("/setTime", handleSetTimeHtml);
@@ -516,6 +514,15 @@ void loop(void) {
    Handler methods
    ---------------------------------------------------------------------------------
 */
+
+void handleConfigTimeHtml() {
+  Serial.println("SetTime:");
+  for (uint8_t i = 0; i < server.args(); i++) {
+    Serial.println(server.argName(i) + "=" + server.arg(i));
+  }
+  server.send(200, "text/html", configHtml("Time Set"));
+}
+
 void handleConfigHtml() {
   startTransaction(msPerSecond);
   server.send(200, "text/html", configHtml(""));
@@ -949,7 +956,7 @@ String processBoostArgs() {
         //
         // H prefix is on until a specific hour
         //(hour * minsPerHour) + mins
-        
+
         divAbsolute = divVal.substring(1).toInt() * minsPerHour;
       } else {
         //
@@ -997,7 +1004,7 @@ void checkDevice() {
         if (deviceOffsetMins[dev] == 0) {
           //
           // Not Boosted so AUTO
-          //         
+          //
           out = isDeviceOn(slot, day, dev);
         } else {
           //
