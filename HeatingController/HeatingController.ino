@@ -55,10 +55,7 @@ Preferences preferences;
 const String rebootAPFlagName = "rebootAsAP";
 const String passwordName = "pw";
 const String ssidName = "ssid";
-const String tempDayName = "tmpDay";
-const String tempHourName = "tmpHour";
-const String tempMinName = "tmpMin";
-
+const String secondsStoreName = "secondsStore";
 
 /*
    Define general constants
@@ -114,7 +111,7 @@ const String boostedHeadHtml = "<hr><h2" + fg + ">Boost (Overrides the schedule)
                                "<tr>"
                                "<th>Device</th><th>Now</th><th>For</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
                                "</tr>";
-const String controlHeadHtml = "<hr><h2" + fg + ">Control (ON/OFF Overrides everything):</h2><table" + fgt + ">"
+const String controlHeadHtml = "<hr><h2" + fg + ">Control (Overrides everything):</h2><table" + fgt + ">"
                                "<tr>"
                                "<th>Device</th><th>Status</th><th>Schedule</th><th>Always</th><th>Always</th><th>Current Status</th>"
                                "</tr>";
@@ -137,6 +134,7 @@ unsigned long timeToCheckMinutes = 0;
 unsigned long activityLedOff = millis();
 unsigned long connectLedTime = millis();
 unsigned long secondsReference = 0;
+boolean timeSetByNTP = false;
 
 boolean connectFlipFlop = true;
 boolean accesspointMode = false;
@@ -170,17 +168,20 @@ String configHtmlHead(boolean refresh) {
     }
   }
 
+  String dateStr = "";
+  if (secondsReference > 0) {
+    dateStr = "<hr><h2 " + fg + ">Date: " + getDateTimeString() + " Day[" + String(dayFromBase()) + " " + slotToTime(getSlotForMinsOfDay()) + "]</h2>" + m;
+  }
   if (displayConfig) {
     return "<html><head><title>Config: " + deviceName + " </title> </head> "
-           "<body style=\"background-color:DarkSalmon;\"><h1 " + fg + ">Config: " + deviceDesc + "</h1>" + m;
+           "<body style=\"background-color:DarkSalmon;\"><h1 " + fg + ">Config: " + deviceDesc + "</h1>" + m + dateStr;
   } else {
     String refreshStr = "";
     if (refresh) {
       refreshStr = "<meta http-equiv=\"refresh\" content=\"10;url=/config\"/>";
     }
     return "<html><head>" + refreshStr + "<title>Main:" + deviceName + "</title></head>"
-           "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>"
-           "<hr><h2 " + fg + ">Date: " + String(getLocalTime()) + " Day[" + String(dayFromBase()) + " " + slotToTime(getSlotForMinsOfDay()) + "]</h2>" + m;
+           "<body style=\"background-color:DodgerBlue;\"><h2 " + fg + ">" + deviceDesc + "</h2>" + dateStr;
   }
 }
 
@@ -367,20 +368,14 @@ void setup(void) {
     pinMode(devicePinList[dev], OUTPUT);
   }
 
-  secondsReference = 0;
-  int tmpDay = readPreference(tempDayName, "-1").toInt();
-  writePreference(tempDayName, "");
-  int tmpHour = readPreference(tempHourName, "-1").toInt();
-  writePreference(tempHourName, "");
-  int tmpMin = readPreference(tempMinName, "-1").toInt();
-  writePreference(tempMinName, "");
-  if ((tmpDay > 0) && (tmpDay < 7) && (tmpHour > 0) && (tmpMin > 0)) {
-    Serial.println("Time read:" + days[tmpDay] + " " + String(tmpHour) + ":" + String(tmpMin));
-    secondsReference = calcBaseSecondsFromDayHourMin(tmpDay, tmpHour, tmpMin, 0);
+  timeSetByNTP = false;
+  secondsReference = readSecondsRefPreference();
+  if (secondsReference > 0) {
+    Serial.println("Time read:" + getDateTimeString());
   } else {
-    Serial.println("Time NOT read:" + String(tmpDay) + " " + String(tmpHour) + ":" + String(tmpMin));
-
+    Serial.println("Time NOT read from preferences");
   }
+
   for (int day = 0; day < daysInWeek; day++) {
     String sl = readPreference("SL" + String(day), "");
     if (sl == "") {
@@ -400,15 +395,13 @@ void setup(void) {
     displayConfig = true;
     initRestart(false, msPerMin * 3);
     writePreference(rebootAPFlagName, emptyStr);
-    Serial.println("AP FLAG: Cleared");
     WiFi.mode(WIFI_AP);
     WiFi.softAP(deviceName.c_str(), apPassword.c_str());
     WiFi.softAPConfig(IP, IP, mask);
     server.begin();
-    Serial.print("Access Point ");
+    Serial.print("STARTING ACCESS POINT for ");
     Serial.print(deviceName);
-    Serial.println(" Started.");
-    Serial.print("IP: ");
+    Serial.print(" on IP: ");
     Serial.println(WiFi.softAPIP());
     Serial.print("MAC:");
     Serial.println(WiFi.softAPmacAddress());
@@ -434,7 +427,6 @@ void setup(void) {
       digitalWrite(connectLed, connectFlipFlop);
       connectFlipFlop = !connectFlipFlop;
     }
-
     Serial.print("Fetching time from NTP:");
     boolean timeNotFetched = true;
     int timeNotFetchedCount = 0;
@@ -454,9 +446,10 @@ void setup(void) {
         }
       } else {
         timeNotFetched = 0;
+        timeSetByNTP = true;
+        clearSecondsRefPreference();
         secondsReference = calcBaseSecondsFromLocalTime();
-        timeToCheckDevice =  millis() + msCheckDeviceDelay;
-        Serial.println(getLocalTime());
+        Serial.println(getDateTimeString());
       }
     }
   }
@@ -483,6 +476,8 @@ void setup(void) {
   } else {
     Serial.println("HTTP service started");
   }
+
+  timeToCheckDevice =  millis() + msCheckDeviceDelay;
 }
 
 void loop(void) {
@@ -549,12 +544,11 @@ void handleConfigTimeHtml() {
       m = readNumberFromString(val, 2, m);
     }
   }
-  if ((day > 0) && (day < 7) && (h > 0) && (m > 0)) {
+  if ((day >= 0) && (day < 7) && (h >= 0) && (m >= 0)) {
     Serial.println();
-    writePreference(tempDayName, String(day));
-    writePreference(tempHourName, String(h));
-    writePreference(tempMinName, String(m));
-    server.send(200, "text/html", alertHtml("Time set:" + days[day] + " " + String(h) + ":" + String(m), "", "Restart", "", "reset"));
+    secondsReference = calcBaseSecondsFromDayHourMin(day, h, m, 0);
+    writeSecondsRefPreference();
+    server.send(200, txtHtml, configHtml("Time and Date set:" + getDateTimeString()));
   }
   server.send(200, "text/html", alertHtml("Error parsing date and time" , "", "OK", "", "config"));
 }
@@ -671,7 +665,7 @@ void handleFactorySettingsAlert() {
 
 void handleFactorySettings() {
   startTransaction(msPerHalfSecond);
-
+  Serial.println("RESET FACTORY SETTINGS");
   String ssid = readPreference(ssidName, emptyStr);
   String pw = readPreference(passwordName, emptyStr);
 
@@ -681,6 +675,7 @@ void handleFactorySettings() {
 
   writePreference(ssidName, ssid);
   writePreference(passwordName, pw);
+  clearSecondsRefPreference();
 
   initRestart(false, msPerSecond);
   server.send(200, txtHtml, configHtml("Reset to Factory Settings: Restarting..."));
@@ -722,7 +717,35 @@ String readSsid(String defaultStr) {
   return readPreference(ssidName, defaultStr);
 }
 
+void updateSecondsRefPreference() {
+  if (readSecondsRefPreference() > 0) {
+    writeSecondsRefPreference();
+  } else {
+    clearSecondsRefPreference();
+  }
+}
 
+void writeSecondsRefPreference() {
+  if ((secondsReference > 0) && (!timeSetByNTP)) {
+    writePreference(secondsStoreName, String(secondsReference + (millis() / msPerSecond)));
+    Serial.println("Time Updated:" + getDateTimeString());
+  } else {
+    clearSecondsRefPreference();
+  }
+}
+
+void clearSecondsRefPreference() {
+  writePreference(secondsStoreName, "");
+}
+
+int readSecondsRefPreference() {
+  String sp = readPreference(secondsStoreName, "");
+  if (sp == "") {
+    return 0;
+  } else {
+    return sp.toInt();
+  }
+}
 /*
    ---------------------------------------------------------------------------------
    Methods to build JSON Strings
@@ -770,7 +793,7 @@ String jsonNVP(String nameStr, String valueStr) {
   #endif
   };
 */
-String getLocalTime() {
+String getDateTimeString() {
   return daysFull[dayFromBase()] + " " + dd(hourOfDay()) + ":" + dd(minuteOfHour());
 }
 
@@ -912,6 +935,7 @@ void initRestart(boolean apMode, unsigned long delayRestart) {
 
 
 void performRestart(boolean resInApMode, String desc) {
+  updateSecondsRefPreference();
   if (resInApMode) {
     writePreference(rebootAPFlagName, trueStr);
     Serial.println("RESTART to AP - " + desc);
