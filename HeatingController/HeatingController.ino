@@ -55,6 +55,10 @@ Preferences preferences;
 const String rebootAPFlagName = "rebootAsAP";
 const String passwordName = "pw";
 const String ssidName = "ssid";
+const String tempDayName = "tmpDay";
+const String tempHourName = "tmpHour";
+const String tempMinName = "tmpMin";
+
 
 /*
    Define general constants
@@ -363,6 +367,20 @@ void setup(void) {
     pinMode(devicePinList[dev], OUTPUT);
   }
 
+  secondsReference = 0;
+  int tmpDay = readPreference(tempDayName, "-1").toInt();
+  writePreference(tempDayName, "");
+  int tmpHour = readPreference(tempHourName, "-1").toInt();
+  writePreference(tempHourName, "");
+  int tmpMin = readPreference(tempMinName, "-1").toInt();
+  writePreference(tempMinName, "");
+  if ((tmpDay > 0) && (tmpDay < 7) && (tmpHour > 0) && (tmpMin > 0)) {
+    Serial.println("Time read:" + days[tmpDay] + " " + String(tmpHour) + ":" + String(tmpMin));
+    secondsReference = calcBaseSecondsFromDayHourMin(tmpDay, tmpHour, tmpMin, 0);
+  } else {
+    Serial.println("Time NOT read:" + String(tmpDay) + " " + String(tmpHour) + ":" + String(tmpMin));
+
+  }
   for (int day = 0; day < daysInWeek; day++) {
     String sl = readPreference("SL" + String(day), "");
     if (sl == "") {
@@ -409,10 +427,10 @@ void setup(void) {
     int count = 0;
     while (WiFi.status() != WL_CONNECTED) {
       if (count > 30) {
-        performRestart(true, "CONFIG");
+        performRestart(true, "FAILED TO CONNECT TO ROUTER!");
       }
       count++;
-      delay(400);
+      delay(500);
       digitalWrite(connectLed, connectFlipFlop);
       connectFlipFlop = !connectFlipFlop;
     }
@@ -517,10 +535,28 @@ void loop(void) {
 
 void handleConfigTimeHtml() {
   Serial.println("SetTime:");
+  int day = -1;
+  int h = -1;
+  int m = -1;
   for (uint8_t i = 0; i < server.args(); i++) {
-    Serial.println(server.argName(i) + "=" + server.arg(i));
+    String val = server.arg(i);
+    Serial.println(server.argName(i) + "=" + val);
+    if (server.argName(i) == "day") {
+      day = readNumberFromString(val, 1, day);
+    }
+    if (server.argName(i) == "time") {
+      h = readNumberFromString(val, 1, h);
+      m = readNumberFromString(val, 2, m);
+    }
   }
-  server.send(200, "text/html", configHtml("Time Set"));
+  if ((day > 0) && (day < 7) && (h > 0) && (m > 0)) {
+    Serial.println();
+    writePreference(tempDayName, String(day));
+    writePreference(tempHourName, String(h));
+    writePreference(tempMinName, String(m));
+    server.send(200, "text/html", alertHtml("Time set:" + days[day] + " " + String(h) + ":" + String(m), "", "Restart", "", "reset"));
+  }
+  server.send(200, "text/html", alertHtml("Error parsing date and time" , "", "OK", "", "config"));
 }
 
 void handleConfigHtml() {
@@ -580,6 +616,7 @@ void handleResetAlertHtml() {
 }
 
 void handleResetHtml() {
+  Serial.println("Handle Restart");
   startTransaction(msPerSecond);
   initRestart(false, msPerSecond * 3);
   server.send(200, txtHtml, configHtml("Restart requested"));
@@ -742,7 +779,11 @@ unsigned long  calcBaseSecondsFromLocalTime() {
   if (!getLocalTime(&timeinfo)) {
     return 0;
   }
-  return (timeinfo.tm_wday * secondsPerDay) + (timeinfo.tm_hour * secondsPerHour) + (timeinfo.tm_min * secondsPerMinute) + timeinfo.tm_sec;
+  return calcBaseSecondsFromDayHourMin(timeinfo.tm_wday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+}
+
+unsigned long  calcBaseSecondsFromDayHourMin(int d, int h, int m, int sec) {
+  return (d * secondsPerDay) + (h * secondsPerHour) + (m * secondsPerMinute) + sec;
 }
 
 unsigned long secondsFromBase() {
@@ -906,6 +947,29 @@ String isSlotChecked(int slot, int day, int device) {
   return "";
 }
 
+int readNumberFromString(String s, int num, int defaultVal) {
+  int p = 0;
+  int l = s.length();
+  String r = "";
+  char c = s.charAt(p);
+  for (int i = 0; i < num; i++) {
+    while (((c < '0') || (c > '9')) && (p <= l)) {
+      p++;
+      c = s.charAt(p);
+    }
+    r = "";
+    while (((c >= '0') && (c <= '9')) && (p <= l)) {
+      r += c;
+      p++;
+      c = s.charAt(p);
+    }
+  }
+  if (r == "") {
+    return defaultVal;
+  }
+  return r.toInt();
+}
+
 /*
    Set activity led. Extends the on time so it can be seen.
 */
@@ -913,7 +977,10 @@ void startTransaction(unsigned int delayMs) {
   digitalWrite(activityLed, HIGH);
   activityLedOff = millis() + delayMs;
   if (accesspointMode) {
-    timeToRestart = millis() + msPerMin;
+    if (timeToRestart > 0 ) {
+      Serial.println("DELAY-RESTART Extended");
+      timeToRestart = millis() + msPerMin * 3;
+    }
   }
 }
 
