@@ -98,6 +98,7 @@ const int dayThu = 4;
 const int dayFri = 5;
 const int daySat = 6;
 
+
 const String fgColour = "White";
 const String bgNormColour = "DodgerBlue";
 const String bgApColour = "Sienna";
@@ -109,6 +110,11 @@ const String fgStyle = " style=\"color:" + fgColour + ";\" ";
 const String bgTabBorderStyle = " style=\"" + tabBorderSpaceing + "\" ";
 const String bgTabOnStyle = " style=\"background-color:" + bgOnColour + ";\" ";
 const String bgHiStyle = " style=\"background-color:" + bgHiColour + ";\" ";
+
+const String css = "<style>"
+                   "body {background-color: " + bgNormColour + ";color: " + fgColour + ";}"
+                   "h2 {color: Sienna;}"
+                   "</style>";
 
 const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
 const String daysFull[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
@@ -166,7 +172,16 @@ String controlStatusList[deviceCount];
 /*
    Define dynamic HTML Strings
 */
-
+String css() {
+  if (accesspointMode) {
+    return "<style>"
+           "body {background-color: " + bgNormColour + ";color: " + fgColour + ";}"
+           "h2 {color: Sienna;}"
+           "</style>"
+  } else {
+    return
+  }
+}
 String mainPageHtml(String msg) {
   return configHtmlHead(true, "Main") + controlHtml() + messageHtml(msg) + boostHtml()  + scheduleDayHtml() + configButtonHtml + htmlEnd;
 }
@@ -200,11 +215,11 @@ String configHtmlHead(boolean refresh, String title) {
   }
 
   if (accesspointMode) {
-    return "<html><head>" + refreshStr + "<title>" + title + "-" + deviceName + " </title> </head> "
-           "<body " + bodyStyle() + "><h1>" + deviceDesc + "</h1>" + m + dateStr;
+    return "<html><head>" + css + refreshStr + "<title>" + title + "-" + deviceName + " </title> </head>"
+           "<body><h2>" + deviceDesc + "</h2>" + m + dateStr;
   } else {
-    return "<html><head>" + refreshStr + "<title>" + title + "-" + deviceName + "</title></head>"
-           "<body " + bodyStyle() + " ><h2>" + deviceDesc + "</h2>" + dateStr;
+    return "<html><head>" + css + refreshStr + "<title>" + title + "-" + deviceName + "</title></head>"
+           "<body><h2>" + deviceDesc + "</h2>" + dateStr;
   }
 }
 
@@ -236,7 +251,7 @@ String alertHtml(String msg, String b1, String b2, String a1, String a2) {
   if (b2 != "") {
     b2Html = "<td><input type=\"button\" onclick=\"location.href='/" + a2 + "';\" value=\"" + b2 + "\" /></td>";
   }
-  return configHtmlHead(false, "Alert") + messageHtml(msg) + "<table><tr>" + b1Html + "</tr><tr><td>or</td></tr><tr>"+ b2Html + "</tr></table>" + htmlEnd;
+  return configHtmlHead(false, "Alert") + messageHtml(msg) + "<table><tr>" + b1Html + "</tr><tr><td>or</td></tr><tr>" + b2Html + "</tr></table>" + htmlEnd;
 }
 
 String messageHtml(String msg) {
