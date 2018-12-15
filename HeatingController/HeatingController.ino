@@ -11,7 +11,7 @@
 
    Device controll constants
 */
-const String deviceName = "HeatingController";
+const String deviceName = "Heating Controller";
 const String deviceDesc = "ESP32 Heating Controller";
 
 const char deviceDataChar = '@'; // Char '@' has the most 0 lsb(s) Hex 01000000 allows for 6 devices
@@ -98,54 +98,38 @@ const int dayThu = 4;
 const int dayFri = 5;
 const int daySat = 6;
 
-
-const String fgColour = "White";
-const String bgNormColour = "DodgerBlue";
-const String bgApColour = "Sienna";
-const String bgHiColour = "Red";
-const String bgOnColour = "Sienna";
-const String tabBorderSpaceing = "border-spacing: 5px 5px;";
-
-const String fgStyle = " style=\"color:" + fgColour + ";\" ";
-const String bgTabBorderStyle = " style=\"" + tabBorderSpaceing + "\" ";
-const String bgTabOnStyle = " style=\"background-color:" + bgOnColour + ";\" ";
-const String bgHiStyle = " style=\"background-color:" + bgHiColour + ";\" ";
-
-const String css = "<style>"
-                   "body {background-color: " + bgNormColour + ";color: " + fgColour + ";}"
-                   "h2 {color: Sienna;}"
-                   "</style>";
-
+const String docType = "<!DOCTYPE html>";
 const String days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
 const String daysFull[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
 const String appJson = "application/json";
 const String txtHtml = "text/html";
-const String fontBold = " style=\"font-weight:bold;text-decoration:underline\" ";
+
 const String boostedMessageHtml = " is <span>&nbsp;BOOSTED&nbsp;</span> for ";
-
-
 const String boostedHeadHtml = "<hr><h2>Boost (Overrides the schedule):</h2><table>"
-                               "<tr>"
+                               "<tr class=\"T1\">"
                                "<th>Device</th><th>Now</th><th>For</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
                                "</tr>";
-const String controlHeadHtml = "<hr><h2>Control (Overrides everything):</h2><table>"
+const String controlHeadHtml = "<hr><h2>Control (Overrides everything):</h2>"
+                               "<table class=\"T1\">"
                                "<tr>"
                                "<th>Device</th><th>Status</th><th>Schedule</th><th>Always</th><th>Always</th><th>Current Status</th>"
                                "</tr>";
-const String scheduleHeadHtml = "<hr><h2>Schedule (Select a day to change):</h2><table " + bgTabBorderStyle + ">";
+const String scheduleHeadHtml = "<hr><h2>Schedule (Select a day to change):</h2>";
 const String noScheduleHeadHtml = "<hr><h2>Schedule requires time set:</h2>";
 const String noTimeHtml = "<hr><h2>Time unavailable until set:</h2>";
 const String htmlEnd = "</body></html>";
 const String resetHtml = "<hr><h2>Reset " + deviceName + ": </h2>"
-                         " <input type=\"button\" onclick=\"location.href='/resetAlert';\" value=\"Reset Now\"/>";
+                         " <input class=\"B1\" type=\"button\" onclick=\"location.href='/resetAlert';\" value=\"Reset Now\"/>";
 const String configButtonHtml = "<hr><h2>Settings " + deviceName + ": </h2>"
-                                " <input type=\"button\" onclick=\"location.href='/config';\" value=\"Go to Settings\"/>";
+                                " <input class=\"B1\" type=\"button\" onclick=\"location.href='/config';\" value=\"Go to Settings\"/>";
 const String mainButtonHtml = "<hr><h2>Main Page " + deviceName + ": </h2>"
-                              " <input type=\"button\" onclick=\"location.href='/';\" value=\"Return to Main Page\"/>";
+                              " <input class=\"B1\" type=\"button\" onclick=\"location.href='/';\" value=\"Return to Main Page\"/>";
 const String factorySetHtml = "<hr><h2>Warning:</h2>"
-                              "<input type=\"button\" onclick=\"location.href='/factorySettingsAlert';\" value=\"Reset to " + deviceName + " to factory settings\" />";
+                              "<input class=\"B1\" type=\"button\" onclick=\"location.href='/factorySettingsAlert';\" value=\"Reset to " + deviceName + " to factory settings\" />";
 
-
+/*
+   Never set directly use setSecondsReference(n);
+*/
 unsigned long __SecondsReference = 0;
 /*
    Working storage
@@ -172,16 +156,36 @@ String controlStatusList[deviceCount];
 /*
    Define dynamic HTML Strings
 */
+
 String css() {
-  if (accesspointMode) {
-    return "<style>"
-           "body {background-color: " + bgNormColour + ";color: " + fgColour + ";}"
-           "h2 {color: Sienna;}"
-           "</style>"
-  } else {
-    return
-  }
+  return "<style>"
+         "body {background-color: " + choose(accesspointMode , "DarkGreen" , "DodgerBlue") + ";color: white;}"
+         " h2 {color: white;}"
+         " .B1 {"
+         " background-color: white;"
+         " color: black;"
+         " border: none;"
+         " padding: 7px 15px;"
+         " text-align: center;"
+         " text-decoration: none;"
+         " display: inline-block;"
+         " font-size: 15px;"
+         "}"
+         " .T1 {"
+         " text-align: center;"
+         " text-decoration: none;"
+         " color: white;"
+         " font-size: 30px;"
+         "}"
+         " .T2 {width: 400px;}"
+         " .T3 td {border: 1px solid black; border-collapse: collapse;}"
+         " .IN {color: black;}"
+         " .HI {background-color: red;color: white;}"
+         " .ON {background-color: yellow;color: black;}"
+         " .TU {font-weight:bold;text-decoration:underline;}"
+         "</style>";
 }
+
 String mainPageHtml(String msg) {
   return configHtmlHead(true, "Main") + controlHtml() + messageHtml(msg) + boostHtml()  + scheduleDayHtml() + configButtonHtml + htmlEnd;
 }
@@ -211,14 +215,14 @@ String configHtmlHead(boolean refresh, String title) {
 
   String refreshStr = "";
   if (refresh && timeIsSet) {
-    refreshStr = "<meta http-equiv=\"refresh\" content=\"10;url=/\"/>";
+    refreshStr = "<meta http-equiv=\"refresh\" content=\"10; url=/\"/>";
   }
 
   if (accesspointMode) {
-    return "<html><head>" + css + refreshStr + "<title>" + title + "-" + deviceName + " </title> </head>"
+    return docType + "<html><head>" + css() + refreshStr + "<title>" + title + "-" + deviceName + " </title> </head>"
            "<body><h2>" + deviceDesc + "</h2>" + m + dateStr;
   } else {
-    return "<html><head>" + css + refreshStr + "<title>" + title + "-" + deviceName + "</title></head>"
+    return docType + "<html><head>" + css() + refreshStr + "<title>" + title + "-" + deviceName + "</title></head>"
            "<body><h2>" + deviceDesc + "</h2>" + dateStr;
   }
 }
@@ -228,7 +232,7 @@ String controlHtml() {
   for (int dev = 0; dev < deviceCount; dev++) {
     ht += "<tr>"
           "<td>" + deviceShortList[dev] + "</td>" +
-          "<td align=\"center\" " + (isStatusAuto(dev) ? "" : bgHiStyle) + ">" + controlStatusList[dev] + "</td>" +
+          "<td " + (isStatusAuto(dev) ? "" : "class=\"T1 HI\"") + ">" + controlStatusList[dev] + "</td>" +
           controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) +
           controlButtonHtml(dev , onStr, "ON", true) +
           controlButtonHtml(dev , offStr, "OFF", true) +
@@ -239,19 +243,19 @@ String controlHtml() {
 }
 
 String controlButtonHtml(int dev, String action, String desc, boolean include) {
-  return "<td><input " + choose(include , "" , "disabled") + " type=\"button\" onclick=\"location.href='/control?" + deviceIdList[dev] + "=" + action + "';\" value=\"" + choose(include , desc , "N/A") + "\" /></td>";
+  return "<td><input class=\"B1\" " + choose(include , "" , "disabled") + " type=\"button\" onclick=\"location.href='/control?" + deviceIdList[dev] + "=" + action + "';\" value=\"" + choose(include , desc , "N/A") + "\" /></td>";
 }
 
 String alertHtml(String msg, String b1, String b2, String a1, String a2) {
   String b1Html = "";
   if (b1 != "") {
-    b1Html = "<td><input type=\"button\" onclick=\"location.href='/" + a1 + "';\" value=\"" + b1 + "\" /></td>";
+    b1Html = "<td><input class=\"B1\" type=\"button\" onclick=\"location.href='/" + a1 + "';\" value=\"" + b1 + "\" /></td>";
   }
   String b2Html = "";
   if (b2 != "") {
-    b2Html = "<td><input type=\"button\" onclick=\"location.href='/" + a2 + "';\" value=\"" + b2 + "\" /></td>";
+    b2Html = "<td><input class=\"B1\" type=\"button\" onclick=\"location.href='/" + a2 + "';\" value=\"" + b2 + "\" /></td>";
   }
-  return configHtmlHead(false, "Alert") + messageHtml(msg) + "<table><tr>" + b1Html + "</tr><tr><td>or</td></tr><tr>" + b2Html + "</tr></table>" + htmlEnd;
+  return configHtmlHead(false, "Alert") + messageHtml(msg) + "<table><tr>" + b1Html + "</tr><tr class=\"T1\"><td>or</td></tr><tr>" + b2Html + "</tr></table>" + htmlEnd;
 }
 
 String messageHtml(String msg) {
@@ -265,9 +269,11 @@ String messageHtml(String msg) {
 String connectionHtml() {
   return "<hr><form action=\"/store\">"
          "<h2>Set Network Connection:</h2>"
-         "<h3>Router Name:</h3><input type=\"text\" name=\"ssid\" value=\"" + readSsid(emptyStr) + "\"><br>"
-         "<h3>Password:</h3><input type=\"text\" name=\"pw\" value=\"\"><br><br>"
-         "<input type=\"submit\" value=\"Send connection data\">"
+         "<h3>Router Name:</h3>"
+         "<input class=\"T1 IN\" type=\"text\" name=\"ssid\" value=\"" + readSsid(emptyStr) + "\"><br>"
+         "<h3>Password:</h3>"
+         "<input class=\"T1 IN\" type=\"text\" name=\"pw\" value=\"\"><br><br>"
+         "<input class=\"B1\" type=\"submit\" value=\"Send connection data\">"
          "</form>";
 }
 
@@ -275,7 +281,7 @@ String boostHtml() {
   String ht = boostedHeadHtml;
   for (int dev = 0; dev < deviceCount; dev++) {
     if (isStatusAuto(dev)) {
-      ht += "<tr>"
+      ht += "<tr class=\"T1\">"
             "<td>" + deviceShortList[dev] + "</td>"
             "<td>" + deviceState[dev] + "</td>"
             "<td>" + calcMinutesToGo(deviceOffsetMins[dev]) + "&nbsp;</td>" +
@@ -285,24 +291,24 @@ String boostHtml() {
             boostButtonHtml(deviceIdList[dev] + "=H24", "Midnight", timeIsSet) +
             "</tr>";
     } else {
-      ht += "<tr><td align=\"center\" colspan=\"6\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To BOOST it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
+      ht += "<tr><td class=\"T1\" colspan=\"6\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To BOOST it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
     }
   }
   return ht + "</table>";
 }
 
 String boostButtonHtml(String deviceTime, String desc, boolean include) {
-  return "<td><input " + choose(include, "" , "disabled") + " type=\"button\" onclick=\"location.href='/boost?" + deviceTime + "';\" value=\"" + choose(include , desc , "N/A") + "\" /></td>";
+  return "<td><input class=\"B1\" " + choose(include, "" , "disabled") + " type=\"button\" onclick=\"location.href='/boost?" + deviceTime + "';\" value=\"" + choose(include , desc , "N/A") + "\" /></td>";
 }
 
 String scheduleDayHtml() {
   if (timeIsSet) {
-    String ht = scheduleHeadHtml;
+    String ht = scheduleHeadHtml + "<table>";
     for (int dev = 0; dev < deviceCount; dev++) {
       if (isStatusAuto(dev)) {
-        ht += "<tr><td>" + deviceShortList[dev] + "</td>" + scheduleDayButtonRowHtml(dev) + "</tr>";
+        ht += "<tr><td class=\"T1\">" + deviceShortList[dev] + "</td>" + scheduleDayButtonRowHtml(dev) + "</tr>";
       } else {
-        ht += "<tr><td align=\"center\" colspan=\"7\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To SCHEDULE it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
+        ht += "<tr><td class=\"T1\" colspan=\"7\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To SCHEDULE it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
       }
     }
     return ht + "</table>";
@@ -324,18 +330,18 @@ String scheduleDayButtonRowHtml(int device) {
 String scheduleDayButtonHtml(int day, int device) {
   String s = "";
   if (day == dayFromBase()) {
-    s = fontBold;
+    s = " TU";
   }
-  return "<td><input " + s + " type=\"button\" onclick=\"location.href='/dispDay?day=" + String(day) + "&dev=" + String(device) + "';\" value=\"" + days[day] + "\" /></td>";
+  return "<td><input class=\"B1" + s + "\" type=\"button\" onclick=\"location.href='/dispDay?day=" + String(day) + "&dev=" + String(device) + "';\" value=\"" + days[day] + "\" /></td>";
 }
 
 String setTimeHtml() {
   String s = "<hr><form action=\"/configtime\"><h2>Set the Day and Time:</h2>";
-  return s + dowDropDownHtml() + timeInputHtml() + "<br/><br/><input type=\"submit\" value=\"Set Time\"></form>";
+  return s + dowDropDownHtml() + timeInputHtml() + "<br/><br/><input class=\"B1\" type=\"submit\" value=\"Set Time\"></form>";
 }
 
 String dowDropDownHtml() {
-  String s = "<h3>Select a DAY:</h3><select name=\"day\">";
+  String s = "<h3>Select a DAY:</h3><select class=\"T1 IN\" name=\"day\">";
   for (int i = 0; i < daysInWeek; i++) {
     s += "<option value=\"" + String(i) + "\">" + daysFull[i] + "</option>";
   }
@@ -343,7 +349,7 @@ String dowDropDownHtml() {
 }
 
 String timeInputHtml() {
-  return "<h3>Enter Time 'hh mm'</h3><input width=\"8\" type=\"text\" name=\"time\" value=\"\">";
+  return "<h3>Enter Time 'hh mm'</h3><input class=\"T1 IN\" width=\"8\" type=\"text\" name=\"time\" value=\"\">";
 }
 
 String schedulePageHtml(int day, int dev) {
@@ -351,18 +357,18 @@ String schedulePageHtml(int day, int dev) {
 }
 
 String scheduleTimesHtml(int day, int dev) {
-  return "<hr><h2>Times for " + deviceDescList[dev] + " on " + daysFull[day] + "</h2>" +
-         "<table border=\"1\" width=\"400px\">" +
+  return "<hr><h2>Times for " + deviceDescList[dev] + " on " + daysFull[day] + "</h2>" 
+         "<input class=\"B1\" type=\"button\" onclick=\"location.href='/';\" value=\"DONE!\"/>"
+         "</br><table class=\"T1 T2 T3\">" +
          scheduleTimesCbHtmlAll(day, dev) +
-         "</table>" +
-         "<br><input type=\"button\" onclick=\"location.href='/config';\" value=\"DONE!\"/>";
+         "</table>";
 }
 
 String scheduleTimesCbHtmlAll(int day, int dev) {
   String ofs = "";
   int offset = 0;
   for (uint8_t y = 0; y < hoursPerDay; y++) {
-    ofs += "<tr>";
+    ofs += "<tr class=\"T1\">";
     for (uint8_t x = 0; x < 4; x++) {
       ofs += scheduleTimesTimeCbHtml(offset, day, dev);
       offset++;
@@ -375,17 +381,9 @@ String scheduleTimesCbHtmlAll(int day, int dev) {
 String scheduleTimesTimeCbHtml(int slot, int day, int dev) {
   String s = "<td>";
   if (isDeviceOn(slot, day, dev)) {
-    s = "<td " + bgTabOnStyle + ">";
+    s = "<td class=\"T1 ON\">";
   }
   return s + "<input type=\"checkbox\" " + isSlotChecked(slot, day, dev) + " onclick=\"location.href='/setTime?ofs=" + slot + "&day=" + day + "&dev=" + dev + "'\">" + slotToTime(slot) + "</td>";
-}
-
-String bodyStyle() {
-  if (accesspointMode) {
-    return "style=\"background-color:" + bgApColour + ";color:" + fgColour + ";\" ";
-  } else {
-    return "style=\"background-color:" + bgNormColour + ";color:" + fgColour + ";\" ";
-  }
 }
 
 void setup(void) {
