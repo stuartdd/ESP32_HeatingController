@@ -105,15 +105,15 @@ const String daysFull[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday
 const String appJson = "application/json";
 const String txtHtml = "text/html";
 
-const String boostedMessageHtml = " is <span>&nbsp;BOOSTED&nbsp;</span> for ";
+const String boostedMessageHtml = " <span class=\"BO\">&nbsp;BOOSTED&nbsp;</span> for ";
 const String boostedHeadHtml = "<hr><h2>Boost:Overrides schedule:</h2><table>"
                                "<tr>"
-                               "<th>Device</th><th>Now</th><th>For</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
+                               "<th>Device</th><th>Boost</th><th>For</th><th>Boost</th><th>Boost</th><th>Boost</th><th>Until</th>"
                                "</tr>";
 const String controlHeadHtml = "<hr><h2>Control:Overrides everything:</h2>"
                                "<table>"
                                "<tr>"
-                               "<th>Device</th><th>Status</th><th></th><th></th><th></th><th>Current Status</th>"
+                               "<th>Device</th><th>Status</th><th></th><th></th><th></th>"
                                "</tr>";
 const String scheduleHeadHtml = "<hr><h2>Schedule:Select a day:</h2>";
 const String noScheduleHeadHtml = "<hr><h2>Schedule requires time set:</h2>";
@@ -187,6 +187,8 @@ String css() {
          ".T3 td {border: 1px solid black; border-collapse: collapse;}"
          ".IN {color: black;}"
          ".HI {background-color: red;color: white;}"
+         ".GN {background-color: green;color: white;}"
+         ".BO {background-color: yellow;color: black;}"
          ".ON {background-color: yellow;color: black;}"
          ".TU {font-weight:bold;text-decoration:underline;}";
 }
@@ -204,10 +206,12 @@ String configHtmlHead(boolean refresh, String title) {
   for (int dev = 0; dev < deviceCount; dev++) {
     if (isStatusAuto(dev)) {
       if (deviceOffsetMins[dev] > 0) {
-        m += "<h3>" + deviceDescList[dev] + boostedMessageHtml + calcMinutesToGo(deviceOffsetMins[dev]) + ".&nbsp;" + boostButtonHtml(deviceIdList[dev] + "=0", "Remove BOOST", true) + "</h3>";
+        m += "<h3>" + deviceDescList[dev] + boostedMessageHtml + calcMinutesToGo(deviceOffsetMins[dev]) + "&nbsp;" + boostButtonHtml(deviceIdList[dev] + "=0", "CANCEL", true) + "</h3>";
+      } else {
+        m += "<h3>" + deviceDescList[dev] + " is: <span class=\"GN\">&nbsp;" + deviceState[dev] + "&nbsp;</span></h3> ";
       }
     } else {
-      m += "<h3>" + deviceDescList[dev] + " is <span>&nbsp;" + controlStatusList[dev] + "&nbsp;</span></h3> ";
+      m += "<h3>" + deviceDescList[dev] + " is: <span class=\"HI\">&nbsp;" + deviceState[dev] + "&nbsp;</span></h3> ";
     }
   }
 
@@ -223,7 +227,7 @@ String configHtmlHead(boolean refresh, String title) {
     refreshStr = "<meta http-equiv=\"refresh\" content=\"10; url=/\">";
   }
 
-  return docType + "<html><head><style>" + css() + "</style>" + refreshStr + 
+  return docType + "<html><head><style>" + css() + "</style>" + refreshStr +
          "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>" + title + "-" + deviceName + " </title></head><body><h2>" + deviceDesc + "</h2>" + dateStr;
 }
 
@@ -236,7 +240,6 @@ String controlHtml() {
           controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) +
           controlButtonHtml(dev , onStr, "ON", true) +
           controlButtonHtml(dev , offStr, "OFF", true) +
-          "<td>" + getNextEvent(dev) + "</td>"
           "</tr>";
   }
   return ht + "</table>";
@@ -290,7 +293,7 @@ String boostHtml() {
     if (isStatusAuto(dev)) {
       ht += "<tr>"
             "<td>" + deviceShortList[dev] + "</td>"
-            "<td>" + deviceState[dev] + "</td>"
+            "<td>" + (deviceOffsetMins[dev] > 0 ? "ON" : "OFF") + "</td>"
             "<td>" + calcMinutesToGo(deviceOffsetMins[dev]) + "&nbsp;</td>" +
             boostButtonHtml(deviceIdList[dev] + "=60", "1 Hour", true) +
             boostButtonHtml(deviceIdList[dev] + "=120", "2 Hour", true) +
@@ -298,7 +301,7 @@ String boostHtml() {
             boostButtonHtml(deviceIdList[dev] + "=H24", "Midnight", timeIsSet) +
             "</tr>";
     } else {
-      ht += "<tr><td colspan=\"6\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To BOOST it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
+      ht += "<tr><td colspan=\"3\">" + deviceShortList[dev] + " is " + controlStatusList[dev] + ".</td><td colspan=\"4\">To BOOST it set it to AUTO:</td></tr>";
     }
   }
   return ht + "</table>";
@@ -315,7 +318,7 @@ String scheduleDayHtml() {
       if (isStatusAuto(dev)) {
         ht += "<tr><td>" + deviceShortList[dev] + "</td>" + scheduleDayButtonRowHtml(dev) + "</tr>";
       } else {
-        ht += "<tr><td colspan=\"7\">" + deviceDescList[dev] + " is " + controlStatusList[dev] + ". To SCHEDULE it set it to --></td>" + controlButtonHtml(dev , autoStr, "AUTO", timeIsSet) + "</tr>";
+        ht += "<tr><td colspan=\"3\">" + deviceShortList[dev] + " is " + controlStatusList[dev] + ".</td><td colspan=\"5\">To SCHEDULE it set it to AUTO:</td></tr>";
       }
     }
     return ht + "</table>";
@@ -356,7 +359,7 @@ String timeInputHtml() {
 }
 
 String schedulePageHtml(int day, int dev) {
-  return configHtmlHead(false, "Schedule") + scheduleDayHtml() + scheduleTimesHtml(day, dev) + htmlEnd;
+  return configHtmlHead(false, "Schedule") + scheduleTimesHtml(day, dev) + htmlEnd;
 }
 
 String scheduleTimesHtml(int day, int dev) {
@@ -448,8 +451,12 @@ void setup(void) {
     Serial.println(WiFi.softAPmacAddress());
   } else {
     accesspointMode = false;
-    Serial.print("SSID:");
-    Serial.println(readSsid(undefined));
+    Serial.print("SSID[");
+    Serial.print(readSsid(undefined));
+    Serial.println("]");
+    Serial.print("PW[");
+    Serial.print(readPreference(passwordName, undefined));
+    Serial.println("]");
     WiFi.mode(WIFI_STA);
     WiFi.begin(readSsid(undefined).c_str(), readPreference(passwordName, undefined).c_str());
     WiFi.setAutoConnect(true);
@@ -1211,4 +1218,90 @@ void WiFiLostIP(WiFiEvent_t event, WiFiEventInfo_t info)
   digitalWrite(connectLed, HIGH);
   Serial.print("WiFi lost connection. Reason: ");
   Serial.println(info.disconnected.reason);
+  WiFiEvent(event);
+}
+
+void WiFiEvent(WiFiEvent_t event)
+{
+  Serial.printf("[WiFi-event] event: %d\n", event);
+
+  switch (event) {
+    case SYSTEM_EVENT_WIFI_READY:
+      Serial.println("WiFi interface ready");
+      break;
+    case SYSTEM_EVENT_SCAN_DONE:
+      Serial.println("Completed scan for access points");
+      break;
+    case SYSTEM_EVENT_STA_START:
+      Serial.println("WiFi client started");
+      break;
+    case SYSTEM_EVENT_STA_STOP:
+      Serial.println("WiFi clients stopped");
+      break;
+    case SYSTEM_EVENT_STA_CONNECTED:
+      Serial.println("Connected to access point");
+      break;
+    case SYSTEM_EVENT_STA_DISCONNECTED:
+      Serial.println("Disconnected from WiFi access point");
+      break;
+    case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
+      Serial.println("Authentication mode of access point has changed");
+      break;
+    case SYSTEM_EVENT_STA_GOT_IP:
+      Serial.print("Obtained IP address: ");
+      Serial.println(WiFi.localIP());
+      break;
+    case SYSTEM_EVENT_STA_LOST_IP:
+      Serial.println("Lost IP address and IP address is reset to 0");
+      break;
+    case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
+      Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
+      break;
+    case SYSTEM_EVENT_STA_WPS_ER_FAILED:
+      Serial.println("WiFi Protected Setup (WPS): failed in enrollee mode");
+      break;
+    case SYSTEM_EVENT_STA_WPS_ER_TIMEOUT:
+      Serial.println("WiFi Protected Setup (WPS): timeout in enrollee mode");
+      break;
+    case SYSTEM_EVENT_STA_WPS_ER_PIN:
+      Serial.println("WiFi Protected Setup (WPS): pin code in enrollee mode");
+      break;
+    case SYSTEM_EVENT_AP_START:
+      Serial.println("WiFi access point started");
+      break;
+    case SYSTEM_EVENT_AP_STOP:
+      Serial.println("WiFi access point  stopped");
+      break;
+    case SYSTEM_EVENT_AP_STACONNECTED:
+      Serial.println("Client connected");
+      break;
+    case SYSTEM_EVENT_AP_STADISCONNECTED:
+      Serial.println("Client disconnected");
+      break;
+    case SYSTEM_EVENT_AP_STAIPASSIGNED:
+      Serial.println("Assigned IP address to client");
+      break;
+    case SYSTEM_EVENT_AP_PROBEREQRECVED:
+      Serial.println("Received probe request");
+      break;
+    case SYSTEM_EVENT_GOT_IP6:
+      Serial.println("IPv6 is preferred");
+      break;
+    case SYSTEM_EVENT_ETH_START:
+      Serial.println("Ethernet started");
+      break;
+    case SYSTEM_EVENT_ETH_STOP:
+      Serial.println("Ethernet stopped");
+      break;
+    case SYSTEM_EVENT_ETH_CONNECTED:
+      Serial.println("Ethernet connected");
+      break;
+    case SYSTEM_EVENT_ETH_DISCONNECTED:
+      Serial.println("Ethernet disconnected");
+      break;
+    case SYSTEM_EVENT_ETH_GOT_IP:
+      Serial.println("Obtained IP address");
+      break;
+    default: break;
+  }
 }
